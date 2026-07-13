@@ -1,1 +1,1 @@
-from . import paystack, ai, question_index, syllable, study_plan
+from . import paystack, ai, question_index, syllabus, study_plan
