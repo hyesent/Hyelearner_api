@@ -411,11 +411,11 @@ class ChildAnalyticsResponse(BaseModel):
 # ============================================================
 
 class DuelCreate(BaseModel):
-    opponent_id: int
     subject: str
     topic: Optional[str] = None
     count: int = Field(10, ge=5, le=20)
     time_limit: int = Field(300, ge=60, le=600)
+    is_public: bool = False  
 
 class DuelJoin(BaseModel):
     duel_id: int
