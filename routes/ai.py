@@ -28,9 +28,6 @@ async def get_explanation(
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
     
-    # Check AI usage limits
-    # In production, track AI usage per user
-    
     # Get AI explanation
     explanation = await ai_service.get_explanation(
         {
@@ -187,9 +184,6 @@ async def get_ai_usage(
     }
 
 
-# ============================================================
-# PLACEHOLDER: AI Question Generator (Future Feature)
-# ============================================================
 @router.post("/generate")
 async def generate_questions(
     topic: str,
@@ -199,9 +193,6 @@ async def generate_questions(
     db: Session = Depends(get_db)
 ):
     """Generate AI-powered practice questions (Future feature)"""
-    # This is a placeholder for future AI question generation
-    # Would require more complex prompt engineering
-    
     questions = await ai_service.generate_questions(
         topic=topic,
         count=count,
