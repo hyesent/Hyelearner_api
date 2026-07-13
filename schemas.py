@@ -90,7 +90,7 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    user: Optional[UserResponse] = None  # ✅ Now UserResponse is defined
+    user: Optional[UserResponse] = None
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
@@ -377,6 +377,7 @@ class AIStudyPlanRequest(BaseModel):
     days_until_exam: Optional[int] = None
     target_score: Optional[str] = None
     study_style: Optional[str] = None
+    exam_type: Optional[str] = "jamb"  # ✅ ADDED: jamb, waec, neco, ssce
 
 class AIStudyPlanResponse(BaseModel):
     plan: Dict[str, Any]
