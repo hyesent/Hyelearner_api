@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import Optional
@@ -47,8 +47,8 @@ async def register(
     db.flush()
     
     # Create settings
-    settings = UserSettings(user_id=db_user.id)
-    db.add(settings)
+    settings_obj = UserSettings(user_id=db_user.id)
+    db.add(settings_obj)
     
     # Create stats
     stats = UserStats(user_id=db_user.id)
@@ -75,13 +75,16 @@ async def register(
     return db_user
 
 
+# ============================================================
+# LOGIN — Now accepts JSON with email + password
+# ============================================================
 @router.post("/login", response_model=TokenResponse)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
+    user_data: UserLogin,  # ← JSON body: { email, password }
     db: Session = Depends(get_db)
 ):
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    user = db.query(User).filter(User.email == user_data.email).first()
+    if not user or not verify_password(user_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials"
