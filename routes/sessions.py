@@ -167,6 +167,40 @@ async def submit_session(
         stats.xp += xp_earned
         stats.level = min(stats.xp // 100 + 1, 20)
     
+    # ✅ UPDATE TOPIC MASTERY (with mastery_score)
+    for q_id in session.question_ids:
+        q = question_map.get(q_id)
+        if not q:
+            continue
+        
+        mastery = db.query(TopicMastery).filter(
+            TopicMastery.user_id == current_user.id,
+            TopicMastery.topic == q.topic,
+            TopicMastery.subject == q.subject
+        ).first()
+        
+        if not mastery:
+            mastery = TopicMastery(
+                user_id=current_user.id,
+                subject=q.subject,
+                topic=q.topic,
+                correct=0,
+                total=0,
+                mastery_score=0.0
+            )
+            db.add(mastery)
+        
+        mastery.total += 1
+        user_answer = data.answers.get(q_id)
+        if user_answer and q and user_answer == q.answer:
+            mastery.correct += 1
+        
+        # Calculate mastery score (0-100)
+        if mastery.total > 0:
+            mastery.mastery_score = (mastery.correct / mastery.total) * 100
+        
+        mastery.updated_at = datetime.utcnow()
+    
     db.commit()
     
     return SessionSubmitResponse(
