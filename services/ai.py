@@ -17,16 +17,13 @@ class AIService:
             print("⚠️ GEMINI_API_KEY not found in environment")
 
     # ============================================================
-    # 1. AI EXPLANATION — Receives question + user_answer
+    # 1. AI EXPLANATION
     # ============================================================
     async def get_explanation(self, question: Dict, user_answer: str) -> Dict:
         """Generate detailed explanation using Gemini"""
-        
-        # Log what we received
         print(f"📥 Received question: {question.get('question_text', 'N/A')[:50]}...")
         print(f"📥 User answer: {user_answer}")
-        
-        # Build the prompt
+
         prompt = f"""
         You are an expert tutor for SSCE/JAMB/WAEC/NECO exam preparation.
 
@@ -66,7 +63,6 @@ class AIService:
         return self._fallback_explanation(question, user_answer)
 
     def _parse_explanation(self, text: str) -> Dict:
-        """Parse Gemini explanation response"""
         result = {
             "explanation": "",
             "key_concept": "",
@@ -78,7 +74,7 @@ class AIService:
         current_section = None
         for line in text.split('\n'):
             line = line.strip()
-            
+
             if line.startswith('EXPLANATION:'):
                 current_section = "explanation"
                 continue
@@ -94,13 +90,12 @@ class AIService:
             elif line.startswith('SHORTCUT:'):
                 current_section = "shortcut"
                 continue
-            
+
             if current_section == "tips" and line.startswith('-'):
                 result["tips"].append(line[1:].strip())
             elif current_section and line and not line.startswith('-'):
                 result[current_section] += line + "\n"
 
-        # Clean up
         for key in result:
             if isinstance(result[key], str):
                 result[key] = result[key].strip()
@@ -117,14 +112,13 @@ class AIService:
         }
 
     # ============================================================
-    # 2. AI WEAKNESS ANALYSIS — Receives mistakes + mastery
+    # 2. AI WEAKNESS ANALYSIS
     # ============================================================
     async def get_weakness_analysis(self, mistakes: List[Dict], mastery: Dict) -> List[Dict]:
         """Analyze weak areas using Gemini"""
         if not mistakes:
             return []
 
-        # Log what we received
         print(f"📥 Received {len(mistakes)} mistakes")
         print(f"📥 Mastery data: {json.dumps(mastery, indent=2)[:200]}...")
 
@@ -162,9 +156,7 @@ class AIService:
         return self._fallback_weakness(mistakes)
 
     def _parse_weakness(self, text: str) -> List[Dict]:
-        """Parse Gemini weakness response"""
         try:
-            # Try to parse as JSON
             import re
             json_match = re.search(r'\[.*\]', text, re.DOTALL)
             if json_match:
@@ -172,7 +164,6 @@ class AIService:
         except:
             pass
 
-        # Fallback: manual parsing
         weak_topics = []
         lines = text.split('\n')
         current = {}
@@ -219,7 +210,7 @@ class AIService:
         return list(topics.values())[:5]
 
     # ============================================================
-    # 3. AI STUDY PLAN — Receives goal, subjects, hours, weak_topics, target_score, study_style
+    # 3. AI STUDY PLAN (Legacy v1)
     # ============================================================
     async def generate_study_plan(
         self,
@@ -231,9 +222,7 @@ class AIService:
         target_score: str = None,
         study_style: str = None
     ) -> Dict:
-        """Generate personalized study plan using Gemini"""
-        
-        # Log what we received
+        """Generate personalized study plan using Gemini (v1)"""
         print(f"📥 Goal: {goal}")
         print(f"📥 Subjects: {subjects}")
         print(f"📥 Hours/week: {hours_per_week}")
@@ -296,7 +285,6 @@ class AIService:
         return self._fallback_study_plan(subjects, hours_per_week, target_score, study_style)
 
     def _parse_study_plan(self, text: str) -> Dict:
-        """Parse Gemini study plan response"""
         result = {
             "daily_schedule": "",
             "subject_breakdown": "",
@@ -318,15 +306,14 @@ class AIService:
         current_section = None
         for line in text.split('\n'):
             line = line.strip()
-            
-            # Check if line is a section header
+
             found_section = False
             for header, key in sections.items():
                 if line.startswith(header):
                     current_section = key
                     found_section = True
                     break
-            
+
             if found_section:
                 continue
 
@@ -335,7 +322,6 @@ class AIService:
             elif current_section and line and not line.startswith('-'):
                 result[current_section] += line + "\n"
 
-        # Clean up
         for key in result:
             if isinstance(result[key], str):
                 result[key] = result[key].strip()
@@ -351,5 +337,110 @@ class AIService:
             "milestones": ["Complete all topics", "Practice tests", f"Reach {target_score or 'target'} score"],
             "tips": ["Stay consistent", "Get enough sleep", "Stay hydrated"]
         }
+
+    # ============================================================
+    # 4. NEW: ENHANCE STUDY PLAN (for v2)
+    # ============================================================
+    async def enhance_study_plan(self, plan: Dict, user_data: Dict, weak_topics: List[str]) -> Dict:
+        """Use AI to enhance the study plan with additional insights"""
+        if not self.gemini:
+            return self._fallback_enhancement()
+
+        prompt = f"""
+        You are an expert study coach. Review this study plan and provide personalized insights.
+
+        USER DATA:
+        - Goal: {user_data.get('goal', 'Pass exam')}
+        - Subjects: {user_data.get('subjects', [])}
+        - Target Score: {user_data.get('target_score', '300+')}
+        - Study Style: {user_data.get('study_style', 'balanced')}
+        - Days Remaining: {user_data.get('days_until_exam', 30)}
+        - Weak Topics: {weak_topics[:5] if weak_topics else 'None'}
+
+        PLAN SUMMARY:
+        - Total Hours: {plan.get('summary', {}).get('total_hours', 0)}
+        - Weekly Hours: {plan.get('summary', {}).get('weekly_hours', 0)}
+        - Topics: {plan.get('summary', {}).get('total_topics', 0)}
+        - Weak Areas: {plan.get('summary', {}).get('weak_areas', [])}
+
+        Provide:
+        1. Key insights (3-5 bullet points) — what the student should focus on
+        2. Critical advice — the most important thing for success
+        3. Confidence score (0-100) — based on the plan's completeness
+        4. Suggestions for improvement
+
+        Return as JSON:
+        {{
+            "insights": ["insight 1", "insight 2", "insight 3"],
+            "critical_advice": "your advice",
+            "confidence_score": 85,
+            "suggestions": "your suggestions"
+        }}
+        """
+
+        try:
+            response = self.gemini.generate_content(prompt)
+            return self._parse_enhancement(response.text)
+        except Exception as e:
+            print(f"❌ Gemini enhancement error: {e}")
+            return self._fallback_enhancement()
+
+    def _parse_enhancement(self, text: str) -> Dict:
+        try:
+            import re
+            json_match = re.search(r'\{.*\}', text, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group())
+        except:
+            pass
+
+        return self._fallback_enhancement()
+
+    def _fallback_enhancement(self) -> Dict:
+        return {
+            "insights": [
+                "Focus on weak topics first",
+                "Consistency beats intensity",
+                "Practice past questions regularly"
+            ],
+            "critical_advice": "Stay consistent with your study schedule. Review weak topics every other day.",
+            "confidence_score": 70,
+            "suggestions": "Review your progress weekly and adjust your schedule accordingly."
+        }
+
+    # ============================================================
+    # 5. AI QUESTION GENERATOR (Future Feature)
+    # ============================================================
+    async def generate_questions(self, topic: str, count: int, difficulty: Optional[str] = None) -> List[Dict]:
+        """Generate AI-powered practice questions (Future feature)"""
+        prompt = f"""
+        Generate {count} {difficulty or 'mixed'} difficulty practice questions on the topic: {topic}.
+
+        Each question should be multiple choice with 4 options.
+
+        Return as JSON array:
+        [
+            {{
+                "question": "What is the question?",
+                "options": ["A. Option 1", "B. Option 2", "C. Option 3", "D. Option 4"],
+                "answer": "A. Option 1",
+                "explanation": "Why this is correct"
+            }}
+        ]
+        """
+
+        if self.gemini:
+            try:
+                response = self.gemini.generate_content(prompt)
+                import re
+                json_match = re.search(r'\[.*\]', response.text, re.DOTALL)
+                if json_match:
+                    return json.loads(json_match.group())
+            except Exception as e:
+                print(f"❌ Gemini generate error: {e}")
+
+        # Fallback: return empty array
+        return []
+
 
 ai_service = AIService()
