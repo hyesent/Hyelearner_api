@@ -152,7 +152,67 @@ EXAM_WEIGHTS = {
             "Oral English": 0.05,
             "Summary": 0.05
         }
-    }
+    },
+    "pre-university": {
+        "Mathematics": {
+            "Algebra": 0.20,
+            "Geometry": 0.15,
+            "Trigonometry": 0.12,
+            "Statistics": 0.12,
+            "Probability": 0.08,
+            "Calculus": 0.08,
+            "Vectors": 0.05,
+            "Number System": 0.20
+        },
+        "English Language": {
+            "Grammar": 0.20,
+            "Comprehension": 0.20,
+            "Vocabulary": 0.15,
+            "Essay Writing": 0.15,
+            "Lexis and Structure": 0.15,
+            "Oral English": 0.10,
+            "Summary": 0.05
+        },
+        "Physics": {
+            "Mechanics": 0.22,
+            "Waves": 0.15,
+            "Electricity": 0.15,
+            "Optics": 0.10,
+            "Magnetism": 0.10,
+            "Heat": 0.10,
+            "Modern Physics": 0.18
+        },
+        "Chemistry": {
+            "Organic Chemistry": 0.18,
+            "Inorganic Chemistry": 0.18,
+            "Physical Chemistry": 0.18,
+            "Atomic Structure": 0.12,
+            "Chemical Bonding": 0.12,
+            "Acids and Bases": 0.12,
+            "Equilibrium": 0.10
+        },
+        "Biology": {
+            "Cell Biology": 0.18,
+            "Genetics": 0.15,
+            "Ecology": 0.15,
+            "Evolution": 0.10,
+            "Human Body": 0.15,
+            "Plants": 0.10,
+            "Animals": 0.10,
+            "Microorganisms": 0.07
+        },
+        "Geography": {
+            "World Geography": 0.20,
+            "Nigeria Geography": 0.15,
+            "Physical Geography": 0.15,
+            "Human Geography": 0.15,
+            "Map Reading": 0.10,
+            "Climate": 0.10,
+            "Geological Processes": 0.10,
+            "GIS": 0.05
+        }
+}
+    
 }
 
 # ============================================================
