@@ -8,6 +8,7 @@ Built for 50+ subjects with 300+ topics
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 import json
+import random
 from .syllabus import (
     get_cached_syllabus,
     get_subject_syllabus,
@@ -137,7 +138,10 @@ class StudyPlanGenerator:
 
         for i, day in enumerate(days):
             day_topics = []
-            day_subjects = subjects_by_day[i % len(subjects_by_day)]
+            if i < len(subjects_by_day):
+                day_subjects = subjects_by_day[i]
+            else:
+                day_subjects = []
 
             for subject in day_subjects:
                 # Get recommended topics for this subject
@@ -405,11 +409,9 @@ class StudyPlanGenerator:
         if not subjects:
             return [[]]
 
-        # Shuffle subjects to distribute evenly
-        import random
         random.shuffle(subjects)
 
-        # Try to put weak subjects on separate days
+        # Separate weak and strong subjects
         weak_subjects = []
         strong_subjects = []
 
@@ -421,25 +423,21 @@ class StudyPlanGenerator:
             else:
                 strong_subjects.append(s)
 
-        # Arrange: weak subjects spread across early days
-        result = []
-        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        # Initialize 7 days
+        result = [[] for _ in range(7)]
 
-        # Distribute weak subjects first
+        # Distribute weak subjects first (spread across weekdays)
         for i, subject in enumerate(weak_subjects):
-            day_idx = i % 5  # Weekdays only
-            if day_idx >= len(result):
-                result.append([])
+            day_idx = i % 5  # Monday-Friday
             result[day_idx].append(subject)
 
-        # Distribute strong subjects
+        # Distribute strong subjects (spread across all days)
         for i, subject in enumerate(strong_subjects):
-            day_idx = (i + 3) % 7  # Spread across all days
-            if day_idx >= len(result):
-                result.append([])
+            day_idx = (i + 3) % 7
             result[day_idx].append(subject)
 
-        return result
+        # Return only days that have subjects
+        return [day for day in result if day]
 
     def _get_topics_for_subject(self, subject: str) -> List[str]:
         """Get topics for a subject from syllabus"""
