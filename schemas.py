@@ -314,7 +314,7 @@ class MasteryUpdate(BaseModel):
 # ============================================================
 
 class SubscriptionInit(BaseModel):
-    plan: str  # "premium"
+    plan: str  # "foundation", "campus", "pro", etc.
 
 class SubscriptionInitResponse(BaseModel):
     authorization_url: str
@@ -367,7 +367,10 @@ class AIStudyPlanRequest(BaseModel):
     goal: str
     subjects: List[str]
     hours_per_week: int
+    weak_topics: Optional[List[str]] = None
     days_until_exam: Optional[int] = None
+    target_score: Optional[str] = None      # ✅ ADDED
+    study_style: Optional[str] = None       # ✅ ADDED
 
 class AIStudyPlanResponse(BaseModel):
     plan: Dict[str, Any]
