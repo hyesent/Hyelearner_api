@@ -29,8 +29,7 @@ async def get_explanation(
         raise HTTPException(status_code=404, detail="Question not found")
     
     # Check AI usage limits
-    stats = db.query(UserStats).filter(UserStats.user_id == current_user.id).first()
-    # In production, track AI usage
+    # In production, track AI usage per user
     
     # Get AI explanation
     explanation = await ai_service.get_explanation(
@@ -38,7 +37,10 @@ async def get_explanation(
             "question_text": question.question,
             "options": question.options,
             "correct_answer": question.answer,
-            "explanation": question.explanation
+            "explanation": question.explanation,
+            "topic": question.topic,
+            "subject": question.subject,
+            "difficulty": question.difficulty
         },
         request.user_answer
     )
@@ -87,7 +89,8 @@ async def get_weakness_analysis(
             "topic": m.topic,
             "subject": m.subject,
             "user_answer": m.user_answer,
-            "correct_answer": m.correct_answer
+            "correct_answer": m.correct_answer,
+            "question_id": m.question_id
         }
         for m in mistakes
     ]
@@ -108,9 +111,16 @@ async def get_weakness_analysis(
     if request.limit and len(weak_topics) > request.limit:
         weak_topics = weak_topics[:request.limit]
     
+    # Generate summary
+    if weak_topics:
+        high_priority = [t for t in weak_topics if t.get('priority') == 'High']
+        summary = f"Found {len(weak_topics)} areas to improve. Focus on {len(high_priority)} high-priority topics first."
+    else:
+        summary = "Great job! No major weaknesses detected. Keep practicing to maintain your skills."
+    
     return {
         "weak_topics": weak_topics,
-        "summary": f"Found {len(weak_topics)} areas to improve. Focus on high-priority topics first.",
+        "summary": summary,
         "created_at": datetime.utcnow().isoformat()
     }
 
@@ -130,13 +140,77 @@ async def generate_study_plan(
     
     weak_topics = list(set([m.topic for m in mistakes]))
     
+    # Get user's stats for context
+    stats = db.query(UserStats).filter(UserStats.user_id == current_user.id).first()
+    
     # Generate study plan
     study_plan = await ai_service.generate_study_plan(
         goal=request.goal,
         subjects=request.subjects,
         hours_per_week=request.hours_per_week,
         weak_topics=weak_topics,
-        days_until_exam=request.days_until_exam
+        days_until_exam=request.days_until_exam,
+        target_score=request.target_score,
+        study_style=request.study_style
     )
     
     return {"plan": study_plan}
+
+
+@router.get("/usage")
+async def get_ai_usage(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get user's AI usage statistics"""
+    settings = db.query(UserSettings).filter(
+        UserSettings.user_id == current_user.id
+    ).first()
+    
+    if not settings:
+        return {
+            "used_today": 0,
+            "used_month": 0,
+            "daily_limit": 10,
+            "monthly_limit": 100,
+            "remaining_today": 10,
+            "remaining_month": 100
+        }
+    
+    return {
+        "used_today": settings.ai_used_today or 0,
+        "used_month": settings.ai_used_month or 0,
+        "daily_limit": settings.ai_daily_limit or 10,
+        "monthly_limit": 100,
+        "remaining_today": max(0, (settings.ai_daily_limit or 10) - (settings.ai_used_today or 0)),
+        "remaining_month": max(0, 100 - (settings.ai_used_month or 0))
+    }
+
+
+# ============================================================
+# PLACEHOLDER: AI Question Generator (Future Feature)
+# ============================================================
+@router.post("/generate")
+async def generate_questions(
+    topic: str,
+    count: int = Query(10, ge=1, le=20),
+    difficulty: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate AI-powered practice questions (Future feature)"""
+    # This is a placeholder for future AI question generation
+    # Would require more complex prompt engineering
+    
+    questions = await ai_service.generate_questions(
+        topic=topic,
+        count=count,
+        difficulty=difficulty
+    )
+    
+    return {
+        "topic": topic,
+        "count": len(questions),
+        "difficulty": difficulty or "mixed",
+        "questions": questions
+    }
