@@ -57,13 +57,14 @@ class User(Base):
     is_verified = Column(Boolean, default=False)
     school = Column(String, nullable=True)
     country = Column(String, nullable=True)
-    exam = Column(String, nullable=True)
+    exam = Column(String, nullable=True)  # jamb, waec, neco, ssce, pre-university
     bio = Column(Text, nullable=True)
     goal = Column(String, nullable=True)
     subscription_expires = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)
+    last_study_plan_update = Column(DateTime(timezone=True), nullable=True)  # ✅ ADDED
 
     # Relationships
     settings = relationship("UserSettings", back_populates="user", uselist=False)
@@ -147,10 +148,10 @@ class Subscription(Base):
 class Question(Base):
     __tablename__ = "questions"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(String, primary_key=True, index=True)  # e.g., "math_geo_tri_001"
     type = Column(String, default="multiple_choice")
     question = Column(Text, nullable=False)
-    options = Column(JSON, nullable=False)
+    options = Column(JSON, nullable=False)  # ["A. 180°", "B. 90°", ...]
     answer = Column(String, nullable=False)
     explanation = Column(Text, nullable=True)
     difficulty = Column(Enum(Difficulty), default=Difficulty.MEDIUM)
@@ -176,7 +177,7 @@ class Lesson(Base):
     topic = Column(String, nullable=False)
     title = Column(String, nullable=False)
     content = Column(Text, nullable=False)
-    reading_time = Column(Integer, nullable=True)
+    reading_time = Column(Integer, nullable=True)  # minutes
     order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -231,7 +232,7 @@ class Mistake(Base):
     correct_answer = Column(String, nullable=False)
     subject = Column(String, nullable=False)
     topic = Column(String, nullable=False)
-    explanation = Column(Text, nullable=True)
+    explanation = Column(Text, nullable=True)  # AI cached
     is_resolved = Column(Boolean, default=False)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -266,6 +267,7 @@ class TopicMastery(Base):
     topic = Column(String, nullable=False)
     correct = Column(Integer, default=0)
     total = Column(Integer, default=0)
+    mastery_score = Column(Float, default=0.0)  # ✅ ADDED (0-100)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", back_populates="topic_mastery")
