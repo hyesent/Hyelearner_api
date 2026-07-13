@@ -1,335 +1,543 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from typing import Optional, List
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from typing import Optional, List, Dict, Any
 from datetime import datetime
-
-from database import get_db
-from models import User, Question, Mistake, TopicMastery, UserStats, UserSettings
-from schemas import (
-    AIExplanationRequest, AIExplanationResponse,
-    AIWeaknessRequest, AIWeaknessResponse,
-    AIWeaknessItem, AIStudyPlanRequest, AIStudyPlanResponse
-)
-from dependencies import get_current_user
-from services.ai import ai_service
-from services.study_plan import StudyPlanGenerator
-from services.syllabus import get_cached_syllabus, get_subject_syllabus
-
-router = APIRouter()
-
-
-@router.post("/explain", response_model=AIExplanationResponse)
-async def get_explanation(
-    request: AIExplanationRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get AI explanation for a question"""
-    question = db.query(Question).filter(Question.id == request.question_id).first()
-    if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
-
-    explanation = await ai_service.get_explanation(
-        {
-            "question_text": question.question,
-            "options": question.options,
-            "correct_answer": question.answer,
-            "explanation": question.explanation,
-            "topic": question.topic,
-            "subject": question.subject,
-            "difficulty": question.difficulty
-        },
-        request.user_answer
-    )
-
-    return explanation
-
-
-@router.post("/weakness", response_model=AIWeaknessResponse)
-async def get_weakness_analysis(
-    request: AIWeaknessRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get AI weakness analysis"""
-    query = db.query(Mistake).filter(
-        Mistake.user_id == current_user.id,
-        Mistake.is_resolved == False
-    )
-
-    if request.subject:
-        query = query.filter(Mistake.subject.ilike(request.subject))
-
-    mistakes = query.limit(100).all()
-
-    if not mistakes:
-        return {
-            "weak_topics": [],
-            "summary": "No mistakes found! Keep up the great work! 🎉",
-            "created_at": datetime.utcnow().isoformat()
-        }
-
-    mastery_query = db.query(TopicMastery).filter(TopicMastery.user_id == current_user.id)
-    if request.subject:
-        mastery_query = mastery_query.filter(TopicMastery.subject.ilike(request.subject))
-
-    mastery_data = mastery_query.all()
-
-    mistake_data = [
-        {
-            "topic": m.topic,
-            "subject": m.subject,
-            "user_answer": m.user_answer,
-            "correct_answer": m.correct_answer,
-            "question_id": m.question_id
-        }
-        for m in mistakes
-    ]
-
-    mastery_dict = {
-        m.topic: {
-            "correct": m.correct,
-            "total": m.total,
-            "accuracy": (m.correct / m.total * 100) if m.total > 0 else 0
-        }
-        for m in mastery_data
-    }
-
-    weak_topics = await ai_service.get_weakness_analysis(mistake_data, mastery_dict)
-
-    if request.limit and len(weak_topics) > request.limit:
-        weak_topics = weak_topics[:request.limit]
-
-    if weak_topics:
-        high_priority = [t for t in weak_topics if t.get('priority') == 'High']
-        summary = f"Found {len(weak_topics)} areas to improve. Focus on {len(high_priority)} high-priority topics first."
-    else:
-        summary = "Great job! No major weaknesses detected. Keep practicing to maintain your skills."
-
-    return {
-        "weak_topics": weak_topics,
-        "summary": summary,
-        "created_at": datetime.utcnow().isoformat()
-    }
+from enum import Enum
 
 
 # ============================================================
-# PREMIUM STUDY PLAN V2 — Uses dynamic syllabus + AI
+# ENUMS (for validation)
 # ============================================================
 
-@router.post("/study-plan-v2")
-async def generate_study_plan_v2(
-    request: AIStudyPlanRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    PREMIUM FEATURE: Generate an advanced AI-powered study plan.
-    Uses dynamic syllabus + user performance data + AI insights.
-    Supports 50+ subjects with 300+ topics.
-    """
-    # 1. Get user's weak topics from mistakes
-    mistakes = db.query(Mistake).filter(
-        Mistake.user_id == current_user.id,
-        Mistake.is_resolved == False
-    ).limit(100).all()
+class UserRole(str, Enum):
+    STUDENT = "student"
+    PARENT = "parent"
+    ADMIN = "admin"
 
-    weak_topics = list(set([m.topic for m in mistakes]))
+class UserTier(str, Enum):
+    FOUNDATION = "foundation"
+    CAMPUS = "campus"
+    CAREER = "career"
+    PRO = "pro"
+    PRO_CAMPUS = "pro_campus"
 
-    # 2. Get topic mastery data
-    mastery_data = db.query(TopicMastery).filter(
-        TopicMastery.user_id == current_user.id
-    ).all()
+class Difficulty(str, Enum):
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
 
-    mastery_dict = {
-        m.topic: (m.correct / m.total) if m.total > 0 else 0.5
-        for m in mastery_data
-    }
-
-    # 3. Get user's stats
-    stats = db.query(UserStats).filter(UserStats.user_id == current_user.id).first()
-
-    # 4. Build user data for study plan generator
-    exam_type = current_user.exam or "jamb"
-    user_data = {
-        "subjects": request.subjects,
-        "hours_per_week": request.hours_per_week,
-        "target_score": request.target_score or "300+",
-        "study_style": request.study_style or "balanced",
-        "days_until_exam": request.days_until_exam or 30,
-        "goal": request.goal
-    }
-
-    # 5. Generate study plan using StudyPlanGenerator
-    generator = StudyPlanGenerator(
-        user_data=user_data,
-        weak_topics=weak_topics,
-        exam_type=exam_type,
-        mastery_data=mastery_dict
-    )
-
-    plan = generator.generate_plan()
-
-    # 6. Get AI enhancement
-    ai_insights = await ai_service.enhance_study_plan(
-        plan=plan,
-        user_data=user_data,
-        weak_topics=weak_topics
-    )
-
-    return {
-        "plan": plan,
-        "ai_insights": ai_insights,
-        "user_stats": {
-            "xp": stats.xp if stats else 0,
-            "level": stats.level if stats else 1,
-            "streak": stats.streak if stats else 0,
-            "total_sessions": stats.total_sessions if stats else 0,
-            "accuracy": stats.accuracy if stats else 0
-        },
-        "exam_info": {
-            "exam_type": exam_type.upper(),
-            "subjects": request.subjects,
-            "days_remaining": user_data["days_until_exam"],
-            "target_score": user_data["target_score"]
-        },
-        "generated_at": datetime.utcnow().isoformat()
-    }
+class DuelStatus(str, Enum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 # ============================================================
-# GET SYLLABUS DATA
+# USER SCHEMAS (MUST COME BEFORE TokenResponse)
 # ============================================================
 
-@router.get("/syllabus")
-async def get_syllabus_data(
-    exam_type: str = Query("jamb", regex="^(jamb|waec|neco)$"),
-    subject: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    Get syllabus data for a specific exam.
-    Returns all topics with weights and priorities.
-    """
-    syllabus = get_cached_syllabus(exam_type)
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    username: str
+    first_name: str
+    last_name: str
+    avatar_url: Optional[str]
+    role: str
+    tier: str
+    school: Optional[str]
+    country: Optional[str]
+    exam: Optional[str]
+    bio: Optional[str]
+    goal: Optional[str]
+    subscription_expires: Optional[datetime]
+    is_active: bool
+    is_verified: bool
+    created_at: datetime
 
-    if subject:
-        subject_data = syllabus.get(subject, {})
-        return {
-            "exam_type": exam_type.upper(),
-            "subject": subject,
-            "topics": subject_data.get("topics", {}),
-            "total_topics": subject_data.get("total_topics", 0),
-            "is_complete": subject_data.get("is_complete", False)
-        }
+    model_config = ConfigDict(from_attributes=True)
 
-    return {
-        "exam_type": exam_type.upper(),
-        "subjects": syllabus
-    }
-
-
-# ============================================================
-# GET STUDY PLAN PRESETS
-# ============================================================
-
-@router.get("/study-plan-presets")
-async def get_study_plan_presets(
-    current_user: User = Depends(get_current_user)
-):
-    """Get preset study plans for different scenarios"""
-    from services.study_plan import get_preset_plans
-    return get_preset_plans()
+class UserUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    school: Optional[str] = None
+    country: Optional[str] = None
+    exam: Optional[str] = None
+    bio: Optional[str] = None
+    goal: Optional[str] = None
 
 
 # ============================================================
-# AI USAGE
+# AUTH SCHEMAS
 # ============================================================
 
-@router.get("/usage")
-async def get_ai_usage(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get user's AI usage statistics"""
-    settings = db.query(UserSettings).filter(
-        UserSettings.user_id == current_user.id
-    ).first()
+class UserCreate(BaseModel):
+    email: EmailStr
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=6, max_length=72)
+    first_name: str = Field(..., min_length=1)
+    last_name: str = Field(..., min_length=1)
+    school: Optional[str] = None
+    country: Optional[str] = None
+    exam: Optional[str] = None
+    referral_code: Optional[str] = None
 
-    if not settings:
-        return {
-            "used_today": 0,
-            "used_month": 0,
-            "daily_limit": 10,
-            "monthly_limit": 100,
-            "remaining_today": 10,
-            "remaining_month": 100
-        }
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
 
-    return {
-        "used_today": settings.ai_used_today or 0,
-        "used_month": settings.ai_used_month or 0,
-        "daily_limit": settings.ai_daily_limit or 10,
-        "monthly_limit": 100,
-        "remaining_today": max(0, (settings.ai_daily_limit or 10) - (settings.ai_used_today or 0)),
-        "remaining_month": max(0, 100 - (settings.ai_used_month or 0))
-    }
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user: Optional[UserResponse] = None
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
-# ============================================================
-# AI QUESTION GENERATOR (Future Feature)
-# ============================================================
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
 
-@router.post("/generate")
-async def generate_questions(
-    topic: str,
-    count: int = Query(10, ge=1, le=20),
-    difficulty: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Generate AI-powered practice questions (Future feature)"""
-    questions = await ai_service.generate_questions(
-        topic=topic,
-        count=count,
-        difficulty=difficulty
-    )
-
-    return {
-        "topic": topic,
-        "count": len(questions),
-        "difficulty": difficulty or "mixed",
-        "questions": questions
-    }
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=6)
 
 
 # ============================================================
-# STUDY PLAN V1 (Legacy — Keep for backward compatibility)
+# USER SETTINGS SCHEMAS
 # ============================================================
 
-@router.post("/study-plan", response_model=AIStudyPlanResponse)
-async def generate_study_plan_v1(
-    request: AIStudyPlanRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Legacy study plan endpoint (v1) — kept for backward compatibility"""
-    mistakes = db.query(Mistake).filter(
-        Mistake.user_id == current_user.id,
-        Mistake.is_resolved == False
-    ).limit(50).all()
+class UserSettingsResponse(BaseModel):
+    dark_mode: bool
+    notifications: bool
+    study_reminders: bool
+    reminder_time: str
+    sound_effects: bool
+    auto_sync: bool
+    ai_daily_limit: int
+    ai_used_today: int
+    ai_used_month: int
 
-    weak_topics = list(set([m.topic for m in mistakes]))
+    model_config = ConfigDict(from_attributes=True)
 
-    study_plan = await ai_service.generate_study_plan(
-        goal=request.goal,
-        subjects=request.subjects,
-        hours_per_week=request.hours_per_week,
-        weak_topics=weak_topics,
-        days_until_exam=request.days_until_exam,
-        target_score=request.target_score,
-        study_style=request.study_style
-    )
+class UserSettingsUpdate(BaseModel):
+    dark_mode: Optional[bool] = None
+    notifications: Optional[bool] = None
+    study_reminders: Optional[bool] = None
+    reminder_time: Optional[str] = None
+    sound_effects: Optional[bool] = None
+    auto_sync: Optional[bool] = None
 
-    return {"plan": study_plan}
+
+# ============================================================
+# QUESTION SCHEMAS
+# ============================================================
+
+class QuestionResponse(BaseModel):
+    id: str
+    type: str
+    question: str
+    options: List[str]
+    answer: str
+    explanation: Optional[str]
+    difficulty: str
+    topic: str
+    subject: str
+    platform: str
+    year: Optional[int]
+
+    model_config = ConfigDict(from_attributes=True)
+
+class QuestionListResponse(BaseModel):
+    items: List[QuestionResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+# ============================================================
+# SESSION SCHEMAS
+# ============================================================
+
+class SessionStart(BaseModel):
+    subject: str
+    topic: Optional[str] = None
+    count: int = Field(30, ge=1, le=50)
+    difficulty: Optional[str] = None
+    is_timed: bool = False
+    time_limit: Optional[int] = Field(600, ge=60, le=3600)
+
+class SessionQuestionResponse(BaseModel):
+    id: str
+    question: str
+    options: List[str]
+    type: str
+    difficulty: str
+    topic: str
+    subject: str
+
+class SessionStartResponse(BaseModel):
+    id: int
+    subject: str
+    topic: Optional[str]
+    total_questions: int
+    questions: List[SessionQuestionResponse]
+    is_timed: bool
+    time_limit: Optional[int]
+    started_at: datetime
+
+class SessionSubmit(BaseModel):
+    session_id: int
+    answers: Dict[str, str]
+    time_taken: Optional[int] = 0
+
+class SessionSubmitResponse(BaseModel):
+    session_id: int
+    score: int
+    total: int
+    correct: int
+    wrong: int
+    skipped: int
+    accuracy: float
+    xp_earned: int
+    completed_at: datetime
+
+class SessionHistoryResponse(BaseModel):
+    id: int
+    subject: str
+    topic: Optional[str]
+    score: int
+    total: int
+    accuracy: float
+    xp_earned: int
+    completed_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================
+# MISTAKE SCHEMAS
+# ============================================================
+
+class MistakeResponse(BaseModel):
+    id: int
+    question_id: str
+    user_answer: str
+    correct_answer: str
+    subject: str
+    topic: str
+    explanation: Optional[str]
+    is_resolved: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class MistakeExplanationResponse(BaseModel):
+    explanation: str
+    key_concept: Optional[str]
+    tips: List[str] = []
+    wrong_explanations: Optional[Dict[str, str]]
+
+
+# ============================================================
+# BOOKMARK SCHEMAS
+# ============================================================
+
+class BookmarkCreate(BaseModel):
+    question_id: str
+    note: Optional[str] = None
+
+class BookmarkResponse(BaseModel):
+    id: int
+    question_id: str
+    note: Optional[str]
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================
+# LESSON SCHEMAS
+# ============================================================
+
+class LessonResponse(BaseModel):
+    id: str
+    subject: str
+    topic: str
+    title: str
+    content: str
+    reading_time: Optional[int]
+    order: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+class LessonProgressResponse(BaseModel):
+    total: int
+    completed: int
+    progress: int
+
+
+# ============================================================
+# GAMIFICATION SCHEMAS
+# ============================================================
+
+class GamificationResponse(BaseModel):
+    xp: int
+    level: int
+    streak: int
+    badges: List[str]
+    total_sessions: int
+    total_questions: int
+    accuracy: float
+
+    model_config = ConfigDict(from_attributes=True)
+
+class XPAddRequest(BaseModel):
+    amount: int
+    source: str
+
+
+# ============================================================
+# HEATMAP / MASTERY SCHEMAS
+# ============================================================
+
+class MasteryItem(BaseModel):
+    accuracy: float
+    attempts: int
+    subject: str
+
+class MasteryResponse(BaseModel):
+    mastery: Dict[str, MasteryItem]
+
+class MasteryUpdate(BaseModel):
+    topic: str
+    accuracy: float = Field(..., ge=0, le=100)
+    subject: str
+
+
+# ============================================================
+# SUBSCRIPTION SCHEMAS
+# ============================================================
+
+class SubscriptionInit(BaseModel):
+    plan: str  # "foundation", "campus", "pro", etc.
+
+class SubscriptionInitResponse(BaseModel):
+    authorization_url: str
+    reference: str
+    access_code: str
+
+class SubscriptionVerifyResponse(BaseModel):
+    status: str
+    plan: str
+    message: str
+
+class SubscriptionStatusResponse(BaseModel):
+    is_active: bool
+    plan: str
+    expires_at: Optional[datetime]
+    days_remaining: int
+    auto_renew: bool
+
+
+# ============================================================
+# AI SCHEMAS
+# ============================================================
+
+class AIExplanationRequest(BaseModel):
+    question_id: str
+    user_answer: str
+
+class AIExplanationResponse(BaseModel):
+    explanation: str
+    key_concept: Optional[str]
+    tips: List[str] = []
+    wrong_explanations: Optional[Dict[str, str]]
+
+class AIWeaknessRequest(BaseModel):
+    subject: Optional[str] = None
+    limit: int = Field(5, ge=1, le=10)
+
+class AIWeaknessItem(BaseModel):
+    topic: str
+    accuracy: int
+    priority: str
+    recommendations: Optional[str]
+
+class AIWeaknessResponse(BaseModel):
+    weak_topics: List[AIWeaknessItem]
+    summary: str
+    created_at: datetime
+
+class AIStudyPlanRequest(BaseModel):
+    goal: str
+    subjects: List[str]
+    hours_per_week: int
+    weak_topics: Optional[List[str]] = None
+    days_until_exam: Optional[int] = None
+    target_score: Optional[str] = None
+    study_style: Optional[str] = None
+    exam_type: Optional[str] = "jamb"  # ✅ ADDED: jamb, waec, neco, ssce
+
+class AIStudyPlanResponse(BaseModel):
+    plan: Dict[str, Any]
+
+
+# ============================================================
+# PARENT SCHEMAS
+# ============================================================
+
+class ParentLinkRequest(BaseModel):
+    code: str
+
+class ParentLinkResponse(BaseModel):
+    success: bool
+    linked_at: datetime
+
+class ParentCodeResponse(BaseModel):
+    code: str
+    expires_at: datetime
+
+class ParentStatusResponse(BaseModel):
+    linked: bool
+    children: List[Dict[str, Any]] = []
+
+class ChildAnalyticsResponse(BaseModel):
+    student: Dict[str, Any]
+
+
+# ============================================================
+# DUEL SCHEMAS
+# ============================================================
+
+class DuelCreate(BaseModel):
+    opponent_id: int
+    subject: str
+    topic: Optional[str] = None
+    count: int = Field(10, ge=5, le=20)
+    time_limit: int = Field(300, ge=60, le=600)
+
+class DuelJoin(BaseModel):
+    duel_id: int
+
+class DuelSubmit(BaseModel):
+    duel_id: int
+    answers: Dict[str, str]
+
+class DuelResponse(BaseModel):
+    id: int
+    challenger: Dict[str, Any]
+    opponent: Optional[Dict[str, Any]]
+    subject: str
+    topic: Optional[str]
+    status: str
+    challenger_score: int
+    opponent_score: int
+    winner: Optional[Dict[str, Any]]
+    created_at: datetime
+    completed_at: Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================
+# LEADERBOARD SCHEMAS
+# ============================================================
+
+class LeaderboardEntry(BaseModel):
+    rank: int
+    user_id: int
+    username: str
+    avatar_url: Optional[str]
+    xp: int
+    level: int
+    streak: int
+    school: Optional[str]
+
+class LeaderboardResponse(BaseModel):
+    rankings: List[LeaderboardEntry]
+    total_users: int
+    filter: str
+
+
+# ============================================================
+# REFERRAL SCHEMAS
+# ============================================================
+
+class ReferralCodeResponse(BaseModel):
+    code: str
+    clicks: int
+    signups: int
+    rewards: int
+
+class ReferralTrackRequest(BaseModel):
+    code: str
+
+class ReferralTrackResponse(BaseModel):
+    success: bool
+    referrer: str
+    reward: int
+    message: str
+
+
+# ============================================================
+# ADMIN SCHEMAS
+# ============================================================
+
+class AdminStatsResponse(BaseModel):
+    total_users: int
+    active_users: int
+    new_users_today: int
+    total_questions: int
+    pending_questions: int
+    total_revenue: float
+    revenue_this_month: float
+    total_sessions: int
+    sessions_today: int
+    subscription_breakdown: Dict[str, int]
+    growth: Dict[str, float]
+
+class AdminUserResponse(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    email: str
+    tier: str
+    status: str
+    created_at: datetime
+    last_active: Optional[datetime]
+
+    model_config = ConfigDict(from_attributes=True)
+
+class AdminUserUpdate(BaseModel):
+    tier: Optional[str] = None
+    status: Optional[str] = None
+
+class AdminQuestionUpdate(BaseModel):
+    status: str
+    subject: Optional[str] = None
+    topic: Optional[str] = None
+    difficulty: Optional[str] = None
+
+
+# ============================================================
+# SYNC SCHEMAS
+# ============================================================
+
+class SyncRequest(BaseModel):
+    bookmarks: Optional[List[Dict]] = None
+    mistakes: Optional[List[Dict]] = None
+    sessions: Optional[List[Dict]] = None
+    results: Optional[List[Dict]] = None
+    gamification: Optional[Dict] = None
+    mastery: Optional[Dict] = None
+    lessons: Optional[List[Dict]] = None
+    planner: Optional[Dict] = None
+    settings: Optional[Dict] = None
+    profile: Optional[Dict] = None
+
+class SyncResponse(BaseModel):
+    success: bool
+    synced_at: datetime
+    synced_items: int
+    conflicts: Optional[List[Dict]] = None
