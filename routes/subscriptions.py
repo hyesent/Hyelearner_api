@@ -21,7 +21,7 @@ router = APIRouter()
 # ============================================================
 PREMIUM_DEV_USERS = [
     "dev@hyesent.com",
-    "test@hyesent.com",
+    "test@example.com",
     "admin@hyesent.com",
 ]
 
