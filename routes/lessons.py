@@ -4,7 +4,7 @@ from typing import Optional, List
 from datetime import datetime
 
 from database import get_db
-from models import Lesson, LessonProgress, User
+from models import Lesson, LessonProgress, User, UserStats
 from schemas import LessonResponse, LessonProgressResponse
 from dependencies import get_current_user
 
@@ -27,6 +27,18 @@ async def get_lessons(
         query = query.filter(Lesson.topic.ilike(topic))
     
     lessons = query.order_by(Lesson.order).all()
+    
+    # Get user progress
+    progress = db.query(LessonProgress).filter(
+        LessonProgress.user_id == current_user.id
+    ).all()
+    
+    progress_map = {p.lesson_id: p for p in progress}
+    
+    # Add completion status to response
+    for lesson in lessons:
+        lesson.is_completed = lesson.id in progress_map and progress_map[lesson.id].is_completed
+    
     return lessons
 
 
@@ -70,6 +82,16 @@ async def complete_lesson(
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found")
     
+    # Check if already completed
+    existing = db.query(LessonProgress).filter(
+        LessonProgress.user_id == current_user.id,
+        LessonProgress.lesson_id == lesson_id,
+        LessonProgress.is_completed == True
+    ).first()
+    
+    if existing:
+        return {"message": "Lesson already completed", "completed": True}
+    
     # Get or create progress
     progress = db.query(LessonProgress).filter(
         LessonProgress.user_id == current_user.id,
@@ -86,15 +108,20 @@ async def complete_lesson(
     progress.is_completed = True
     progress.completed_at = datetime.utcnow()
     
-    # Award XP
+    # ✅ Award XP for completing a lesson
     stats = db.query(UserStats).filter(UserStats.user_id == current_user.id).first()
     if stats:
-        stats.xp += 25  # XP for completing a lesson
+        stats.xp += 25  # XP for lesson completion
         stats.level = min(stats.xp // 100 + 1, 20)
+        stats.last_activity = datetime.utcnow()
     
     db.commit()
     
-    return {"message": "Lesson marked as completed"}
+    return {
+        "message": "Lesson marked as completed",
+        "xp_earned": 25,
+        "completed": True
+    }
 
 
 @router.get("/progress", response_model=LessonProgressResponse)
