@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 from datetime import datetime, timedelta
 import random
+import secrets
 
 from database import get_db
 from models import User, Duel, Question, UserStats
@@ -12,23 +13,38 @@ from dependencies import get_current_user
 router = APIRouter()
 
 
+# ============================================================
+# HELPER: Get Active Users
+# ============================================================
+
+def get_active_users(db: Session, minutes: int = 5):
+    """Get users active in the last X minutes"""
+    cutoff = datetime.utcnow() - timedelta(minutes=minutes)
+    active_users = db.query(User).filter(
+        User.last_login >= cutoff,
+        User.is_active == True
+    ).all()
+    return active_users
+
+
+# ============================================================
+# 1. CREATE DUEL — With Public/Private toggle
+# ============================================================
+
 @router.post("/create")
 async def create_duel(
     data: DuelCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create a new duel challenge"""
-    # Check opponent exists
-    opponent = db.query(User).filter(User.id == data.opponent_id).first()
-    if not opponent:
-        raise HTTPException(status_code=404, detail="Opponent not found")
-    
-    if opponent.id == current_user.id:
-        raise HTTPException(status_code=400, detail="Cannot duel yourself")
-    
+    """
+    Create a duel with Public/Private toggle.
+    - Public: Appears in lobby for all users
+    - Private: Only accessible via code
+    """
     # Get questions
     query = db.query(Question).filter(Question.subject.ilike(data.subject))
+    
     if data.topic:
         query = query.filter(Question.topic.ilike(data.topic))
     
@@ -39,14 +55,23 @@ async def create_duel(
     # Select random questions
     selected_questions = random.sample(questions, data.count)
     
+    # Generate unique code
+    code = secrets.token_hex(3).upper()
+    
+    # Get active users count
+    active_users = get_active_users(db)
+    active_count = len(active_users)
+    
     # Create duel
     duel = Duel(
         challenger_id=current_user.id,
-        opponent_id=data.opponent_id,
+        opponent_id=None,
+        code=code,
         subject=data.subject,
         topic=data.topic,
         question_ids=[q.id for q in selected_questions],
-        status="pending",
+        status="waiting",
+        is_public=data.is_public,  # ✅ NEW: public/private
         time_limit=data.time_limit,
         challenger_score=0,
         opponent_score=0
@@ -55,17 +80,108 @@ async def create_duel(
     db.commit()
     db.refresh(duel)
     
+    # Format active users for response
+    active_users_list = [
+        {
+            "id": u.id,
+            "username": u.username,
+            "avatar_url": u.avatar_url
+        }
+        for u in active_users
+    ]
+    
     return {
         "duel_id": duel.id,
-        "message": "Duel created successfully",
+        "code": code,
+        "is_public": duel.is_public,
+        "message": "Duel created!",
         "challenger": current_user.username,
-        "opponent": opponent.username,
         "subject": duel.subject,
         "questions_count": len(selected_questions),
         "time_limit": duel.time_limit,
-        "status": duel.status
+        "active_users": {
+            "count": active_count,
+            "users": active_users_list
+        }
     }
 
+
+# ============================================================
+# 2. GET PUBLIC DUELS (Lobby)
+# ============================================================
+
+@router.get("/public")
+async def get_public_duels(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all public duels waiting for opponents.
+    Shows challenger name, subject, topic, time since created.
+    """
+    duels = db.query(Duel).filter(
+        Duel.is_public == True,
+        Duel.status == "waiting",
+        Duel.challenger_id != current_user.id
+    ).order_by(Duel.created_at.desc()).all()
+    
+    # Get active users count
+    active_users = get_active_users(db)
+    active_count = len(active_users)
+    
+    lobby = []
+    for duel in duels:
+        challenger = db.query(User).filter(User.id == duel.challenger_id).first()
+        time_ago = (datetime.utcnow() - duel.created_at).seconds // 60  # minutes
+        
+        lobby.append({
+            "duel_id": duel.id,
+            "code": duel.code,
+            "challenger": challenger.username,
+            "subject": duel.subject,
+            "topic": duel.topic,
+            "question_count": len(duel.question_ids),
+            "time_limit": duel.time_limit,
+            "created_ago": f"{time_ago}m ago",
+            "status": duel.status
+        })
+    
+    return {
+        "active_users": active_count,
+        "duels": lobby,
+        "total_public_duels": len(lobby)
+    }
+
+
+# ============================================================
+# 3. GET ACTIVE USERS
+# ============================================================
+
+@router.get("/active-users")
+async def get_active_users_endpoint(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all currently active users"""
+    active_users = get_active_users(db)
+    
+    return {
+        "count": len(active_users),
+        "users": [
+            {
+                "id": u.id,
+                "username": u.username,
+                "avatar_url": u.avatar_url,
+                "last_login": u.last_login.isoformat() if u.last_login else None
+            }
+            for u in active_users
+        ]
+    }
+
+
+# ============================================================
+# 4. JOIN DUEL — By Code or Public
+# ============================================================
 
 @router.post("/join")
 async def join_duel(
@@ -73,24 +189,34 @@ async def join_duel(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Join a pending duel"""
-    duel = db.query(Duel).filter(Duel.id == data.duel_id).first()
-    if not duel:
-        raise HTTPException(status_code=404, detail="Duel not found")
+    """
+    Join a duel using the code.
+    For public duels, the code is optional — user can join from lobby.
+    """
+    # If code provided → join by code
+    if data.code:
+        duel = db.query(Duel).filter(Duel.code == data.code).first()
+        if not duel:
+            raise HTTPException(status_code=404, detail="Invalid code. Duel not found.")
+    else:
+        raise HTTPException(status_code=400, detail="Code required to join")
     
-    if duel.status != "pending":
-        raise HTTPException(status_code=400, detail="Duel already started or completed")
+    if duel.status == "completed":
+        raise HTTPException(status_code=400, detail="Duel already completed")
+    
+    if duel.status == "active":
+        raise HTTPException(status_code=400, detail="Duel already has an opponent")
     
     if duel.challenger_id == current_user.id:
-        raise HTTPException(status_code=400, detail="You already created this duel")
+        raise HTTPException(status_code=400, detail="You created this duel. Wait for opponent.")
     
-    if duel.opponent_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You are not the opponent")
+    # Set opponent
+    duel.opponent_id = current_user.id
+    duel.status = "active"
+    db.commit()
     
     # Get questions
     questions = db.query(Question).filter(Question.id.in_(duel.question_ids)).all()
-    
-    # Format questions for response
     questions_data = [
         {
             "id": q.id,
@@ -104,8 +230,64 @@ async def join_duel(
         for q in questions
     ]
     
+    return {
+        "duel_id": duel.id,
+        "code": duel.code,
+        "subject": duel.subject,
+        "topic": duel.topic,
+        "questions": questions_data,
+        "time_limit": duel.time_limit,
+        "challenger": db.query(User).filter(User.id == duel.challenger_id).first().username,
+        "opponent": current_user.username,
+        "status": duel.status
+    }
+
+
+# ============================================================
+# 5. JOIN PUBLIC DUEL (From Lobby)
+# ============================================================
+
+@router.post("/join-public/{duel_id}")
+async def join_public_duel(
+    duel_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Join a public duel directly from the lobby.
+    No code needed.
+    """
+    duel = db.query(Duel).filter(
+        Duel.id == duel_id,
+        Duel.is_public == True,
+        Duel.status == "waiting"
+    ).first()
+    
+    if not duel:
+        raise HTTPException(status_code=404, detail="Duel not found or already taken")
+    
+    if duel.challenger_id == current_user.id:
+        raise HTTPException(status_code=400, detail="You created this duel")
+    
+    # Set opponent
+    duel.opponent_id = current_user.id
     duel.status = "active"
     db.commit()
+    
+    # Get questions
+    questions = db.query(Question).filter(Question.id.in_(duel.question_ids)).all()
+    questions_data = [
+        {
+            "id": q.id,
+            "question": q.question,
+            "options": q.options,
+            "type": q.type,
+            "difficulty": q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty,
+            "topic": q.topic,
+            "subject": q.subject
+        }
+        for q in questions
+    ]
     
     return {
         "duel_id": duel.id,
@@ -114,9 +296,14 @@ async def join_duel(
         "questions": questions_data,
         "time_limit": duel.time_limit,
         "challenger": db.query(User).filter(User.id == duel.challenger_id).first().username,
-        "opponent": db.query(User).filter(User.id == duel.opponent_id).first().username
+        "opponent": current_user.username,
+        "status": duel.status
     }
 
+
+# ============================================================
+# 6. SUBMIT DUEL ANSWERS
+# ============================================================
 
 @router.post("/submit")
 async def submit_duel(
@@ -159,6 +346,8 @@ async def submit_duel(
         duel.opponent_answers = data.answers
         duel.opponent_score = correct
     
+    db.commit()
+    
     # Check if both players have submitted
     if duel.challenger_answers and duel.opponent_answers:
         duel.status = "completed"
@@ -172,16 +361,28 @@ async def submit_duel(
         else:
             duel.winner_id = None  # Draw
         
-        # Award XP (simplified)
+        # Award XP to winner
         if duel.winner_id:
             winner_stats = db.query(UserStats).filter(UserStats.user_id == duel.winner_id).first()
             if winner_stats:
                 winner_stats.xp += 50
                 winner_stats.level = min(winner_stats.xp // 100 + 1, 20)
+        
+        db.commit()
+        
+        winner_name = db.query(User).filter(User.id == duel.winner_id).first().username if duel.winner_id else "Draw"
+        
+        return {
+            "duel_id": duel.id,
+            "submitted": True,
+            "your_score": correct,
+            "status": "completed",
+            "challenger_score": duel.challenger_score,
+            "opponent_score": duel.opponent_score,
+            "winner": winner_name,
+            "completed_at": duel.completed_at
+        }
     
-    db.commit()
-    
-    # Return current submission status
     return {
         "duel_id": duel.id,
         "submitted": True,
@@ -189,9 +390,13 @@ async def submit_duel(
         "status": duel.status,
         "challenger_score": duel.challenger_score if duel.challenger_answers else None,
         "opponent_score": duel.opponent_score if duel.opponent_answers else None,
-        "winner": db.query(User).filter(User.id == duel.winner_id).first().username if duel.winner_id else None
+        "winner": None
     }
 
+
+# ============================================================
+# 7. GET DUEL HISTORY
+# ============================================================
 
 @router.get("/history")
 async def get_duel_history(
@@ -212,17 +417,23 @@ async def get_duel_history(
         
         history.append({
             "id": duel.id,
+            "code": duel.code,
             "challenger": challenger.username,
-            "opponent": opponent.username,
+            "opponent": opponent.username if opponent else "Unknown",
             "challenger_score": duel.challenger_score,
             "opponent_score": duel.opponent_score,
             "winner": challenger.username if duel.winner_id == duel.challenger_id else opponent.username if duel.winner_id else "Draw",
             "subject": duel.subject,
+            "is_public": duel.is_public,
             "completed_at": duel.completed_at
         })
     
     return history
 
+
+# ============================================================
+# 8. GET DUEL STATUS
+# ============================================================
 
 @router.get("/{duel_id}")
 async def get_duel_status(
@@ -230,7 +441,7 @@ async def get_duel_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get duel status"""
+    """Get duel status by ID"""
     duel = db.query(Duel).filter(Duel.id == duel_id).first()
     if not duel:
         raise HTTPException(status_code=404, detail="Duel not found")
@@ -240,14 +451,47 @@ async def get_duel_status(
     
     return {
         "id": duel.id,
+        "code": duel.code,
         "challenger": challenger.username,
         "opponent": opponent.username if opponent else "Waiting for opponent",
         "subject": duel.subject,
         "topic": duel.topic,
         "status": duel.status,
+        "is_public": duel.is_public,
         "challenger_score": duel.challenger_score,
         "opponent_score": duel.opponent_score,
         "winner": challenger.username if duel.winner_id == duel.challenger_id else opponent.username if duel.winner_id else "Draw",
         "created_at": duel.created_at,
         "completed_at": duel.completed_at
+    }
+
+
+# ============================================================
+# 9. GET DUEL BY CODE
+# ============================================================
+
+@router.get("/code/{code}")
+async def get_duel_by_code(
+    code: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get duel by code (before joining)"""
+    duel = db.query(Duel).filter(Duel.code == code).first()
+    if not duel:
+        raise HTTPException(status_code=404, detail="Invalid code. Duel not found.")
+    
+    challenger = db.query(User).filter(User.id == duel.challenger_id).first()
+    
+    return {
+        "duel_id": duel.id,
+        "code": duel.code,
+        "challenger": challenger.username,
+        "subject": duel.subject,
+        "topic": duel.topic,
+        "status": duel.status,
+        "is_public": duel.is_public,
+        "questions_count": len(duel.question_ids),
+        "time_limit": duel.time_limit,
+        "created_at": duel.created_at
     }
