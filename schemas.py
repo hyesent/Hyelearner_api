@@ -39,7 +39,7 @@ class DuelStatus(str, Enum):
 class UserCreate(BaseModel):
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=6, max_length=72)
     first_name: str = Field(..., min_length=1)
     last_name: str = Field(..., min_length=1)
     school: Optional[str] = None
@@ -55,6 +55,7 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    user: Optional[UserResponse] = None  # ✅ ADDED
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
@@ -369,8 +370,8 @@ class AIStudyPlanRequest(BaseModel):
     hours_per_week: int
     weak_topics: Optional[List[str]] = None
     days_until_exam: Optional[int] = None
-    target_score: Optional[str] = None      # ✅ ADDED
-    study_style: Optional[str] = None       # ✅ ADDED
+    target_score: Optional[str] = None
+    study_style: Optional[str] = None
 
 class AIStudyPlanResponse(BaseModel):
     plan: Dict[str, Any]
