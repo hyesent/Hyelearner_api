@@ -12,7 +12,7 @@ from models import User
 from routes import (
     auth, user, questions, sessions, mistakes, bookmarks,
     lessons, heatmap, gamification, ai, subscriptions,
-    parent, duel, leaderboard, referrals, admin
+    parent, duel, leaderboard, referrals, admin, study_plan
 )
 
 
