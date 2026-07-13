@@ -33,43 +33,7 @@ class DuelStatus(str, Enum):
 
 
 # ============================================================
-# AUTH SCHEMAS
-# ============================================================
-
-class UserCreate(BaseModel):
-    email: EmailStr
-    username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6, max_length=72)
-    first_name: str = Field(..., min_length=1)
-    last_name: str = Field(..., min_length=1)
-    school: Optional[str] = None
-    country: Optional[str] = None
-    exam: Optional[str] = None
-    referral_code: Optional[str] = None
-
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
-
-class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    user: Optional[UserResponse] = None  # ✅ ADDED
-
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str
-
-class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
-
-class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str = Field(..., min_length=6)
-
-
-# ============================================================
-# USER SCHEMAS
+# USER SCHEMAS (MUST COME BEFORE TokenResponse)
 # ============================================================
 
 class UserResponse(BaseModel):
@@ -101,6 +65,47 @@ class UserUpdate(BaseModel):
     exam: Optional[str] = None
     bio: Optional[str] = None
     goal: Optional[str] = None
+
+
+# ============================================================
+# AUTH SCHEMAS
+# ============================================================
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=6, max_length=72)
+    first_name: str = Field(..., min_length=1)
+    last_name: str = Field(..., min_length=1)
+    school: Optional[str] = None
+    country: Optional[str] = None
+    exam: Optional[str] = None
+    referral_code: Optional[str] = None
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user: Optional[UserResponse] = None  # ✅ Now UserResponse is defined
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=6)
+
+
+# ============================================================
+# USER SETTINGS SCHEMAS
+# ============================================================
 
 class UserSettingsResponse(BaseModel):
     dark_mode: bool
