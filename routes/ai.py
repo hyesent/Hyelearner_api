@@ -205,7 +205,7 @@ async def generate_study_plan_v2(
 
 @router.get("/syllabus")
 async def get_syllabus_data(
-    exam_type: str = Query("jamb", regex="^(jamb|waec|neco|ssce)$"),
+    exam_type: str = Query("jamb", regex="^(jamb|waec|neco|ssce|pre-university)$"),
     subject: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
