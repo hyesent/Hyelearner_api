@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import Optional
@@ -75,14 +75,12 @@ async def register(
     return db_user
 
 
-# ============================================================
-# LOGIN — Now accepts JSON with email + password
-# ============================================================
 @router.post("/login", response_model=TokenResponse)
 async def login(
-    user_data: UserLogin,  # ← JSON body: { email, password }
+    user_data: UserLogin,
     db: Session = Depends(get_db)
 ):
+    # Find user by email
     user = db.query(User).filter(User.email == user_data.email).first()
     if not user or not verify_password(user_data.password, user.hashed_password):
         raise HTTPException(
@@ -100,6 +98,7 @@ async def login(
     user.last_login = datetime.utcnow()
     db.commit()
     
+    # Create token data
     token_data = {
         "sub": str(user.id),
         "email": user.email,
@@ -107,13 +106,34 @@ async def login(
         "tier": user.tier.value if hasattr(user.tier, 'value') else user.tier
     }
     
+    # Create tokens
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
     
+    # ✅ Return user with tokens
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "avatar_url": user.avatar_url,
+            "role": user.role.value if hasattr(user.role, 'value') else user.role,
+            "tier": user.tier.value if hasattr(user.tier, 'value') else user.tier,
+            "school": user.school,
+            "country": user.country,
+            "exam": user.exam,
+            "bio": user.bio,
+            "goal": user.goal,
+            "subscription_expires": user.subscription_expires,
+            "is_active": user.is_active,
+            "is_verified": user.is_verified,
+            "created_at": user.created_at
+        }
     }
 
 
