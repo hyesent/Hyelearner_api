@@ -104,7 +104,7 @@ app.include_router(duel.router, prefix="/duel", tags=["Duel"])
 app.include_router(leaderboard.router, prefix="/leaderboard", tags=["Leaderboard"])
 app.include_router(referrals.router, prefix="/referral", tags=["Referrals"])
 app.include_router(admin.router, prefix="/admin", tags=["Admin"])
-
+app.include_router(study_plan.router, prefix="/study-plan", tags=["Study Plan"]) 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
