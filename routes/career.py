@@ -1,7 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional, List
-import httpx
 
 from database import get_db
 from models import User
@@ -9,49 +8,6 @@ from dependencies import get_current_user
 from services.ai import ai_service
 
 router = APIRouter()
-
-UNIVERSITIES_API = "https://universities.hipolabs.com/search"
-
-
-# ============================================================
-# SEARCH UNIVERSITIES (External API)
-# ============================================================
-
-@router.get("/search-universities")
-async def search_universities(
-    query: str = Query(..., min_length=2),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Search universities worldwide.
-    User types → API returns results → User selects one.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                UNIVERSITIES_API,
-                params={"name": query}
-            )
-            data = response.json()
-        
-        results = []
-        for uni in data[:20]:
-            results.append({
-                "name": uni.get("name", ""),
-                "country": uni.get("country", ""),
-                "state": uni.get("state-province"),
-                "web": uni.get("web_pages", [""])[0] if uni.get("web_pages") else "",
-                "domains": uni.get("domains", [])
-            })
-        
-        return {
-            "query": query,
-            "count": len(results),
-            "results": results
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching universities: {str(e)}")
 
 
 # ============================================================
