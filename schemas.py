@@ -377,7 +377,7 @@ class AIStudyPlanRequest(BaseModel):
     days_until_exam: Optional[int] = None
     target_score: Optional[str] = None
     study_style: Optional[str] = None
-    exam_type: Optional[str] = "jamb"  # ✅ ADDED: jamb, waec, neco, ssce
+    exam_type: Optional[str] = "jamb"
 
 class AIStudyPlanResponse(BaseModel):
     plan: Dict[str, Any]
@@ -415,11 +415,11 @@ class DuelCreate(BaseModel):
     topic: Optional[str] = None
     count: int = Field(10, ge=5, le=20)
     time_limit: int = Field(300, ge=60, le=600)
-    is_public: bool = False  
-  questions: List[Dict] = Field(default_factory=list)
+    is_public: bool = False
+    questions: List[Dict] = Field(default_factory=list)  # ✅ Fixed indentation
 
 class DuelJoin(BaseModel):
-    duel_id: int
+    code: str
 
 class DuelSubmit(BaseModel):
     duel_id: int
