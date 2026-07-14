@@ -327,7 +327,8 @@ class Duel(Base):
     time_limit = Column(Integer, default=300)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
-
+ 
+    questions_data = Column(JSON, default=[]) 
     challenger = relationship("User", foreign_keys=[challenger_id])
     opponent = relationship("User", foreign_keys=[opponent_id])
     winner = relationship("User", foreign_keys=[winner_id])
