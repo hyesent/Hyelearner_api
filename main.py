@@ -12,7 +12,7 @@ from models import User
 from routes import (
     auth, user, questions, sessions, mistakes, bookmarks,
     lessons, heatmap, gamification, ai, subscriptions,
-    parent, duel, leaderboard, referrals, admin, study_plan
+    parent, duel, leaderboard, referrals, admin, study_plan, career
 )
 
 
@@ -105,6 +105,7 @@ app.include_router(leaderboard.router, prefix="/leaderboard", tags=["Leaderboard
 app.include_router(referrals.router, prefix="/referral", tags=["Referrals"])
 app.include_router(admin.router, prefix="/admin", tags=["Admin"])
 app.include_router(study_plan.router, prefix="/study-plan", tags=["Study Plan"]) 
+app.include_router(career.router, prefix="/career", tags=["Career"])
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
