@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 # ============================================================
-# CHECK ADMISSION ELIGIBILITY (AI-Powered)
+# COURSE FINDER — CHECK ADMISSION ELIGIBILITY
 # ============================================================
 
 @router.post("/check")
@@ -21,8 +21,9 @@ async def check_admission(
     db: Session = Depends(get_db)
 ):
     """
-    Check if user qualifies for a course at ANY university in the world.
+    COURSE FINDER — Check if user qualifies for a course at ANY university.
     Uses AI (Gemini/Groq) to determine admission requirements.
+    Returns: qualified/partial/not_qualified + similar courses if not qualified.
     """
     university = data.get("university", "").strip()
     country = data.get("country", "")
@@ -43,8 +44,8 @@ async def check_admission(
     if not score_type or score_type == "percentage":
         score_type = detect_score_type(country)
     
-    # Call AI service
-    result = await ai_service.check_admission_eligibility(
+    # Call AI service — Course Finder
+    result = await ai_service.course_finder_check(
         university=university,
         country=country,
         course=course,
