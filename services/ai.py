@@ -457,270 +457,136 @@ class AIService:
     # 6. NEW: CHECK ADMISSION ELIGIBILITY (Global Course Finder)
     # ============================================================
 
-    async def check_admission_eligibility(
-        self,
-        university: str,
-        country: str,
-        course: str,
-        score: float,
-        score_type: str,
-        subjects: List[str]
-    ) -> dict:
-        """Check if user qualifies for a course at ANY university in the world"""
-        
-        prompt = f"""
-        You are an expert university admissions advisor.
+    
+        async def course_finder_check(
+    self,
+    university: str,
+    country: str,
+    course: str,
+    score: float,
+    score_type: str,
+    subjects: List[str]
+) -> dict:
+    """
+    Course Finder — AI checks admission + suggests similar courses if not qualified.
+    """
+    
+    prompt = f"""
+    You are a global university admissions advisor.
 
-        UNIVERSITY: {university}
-        COUNTRY: {country}
-        COURSE: {course}
-        SCORE: {score}
-        SCORE TYPE: {score_type}
-        SUBJECTS: {', '.join(subjects)}
+    Student wants to study {course} at {university} in {country}.
+    Score: {score} ({score_type})
+    Subjects: {', '.join(subjects)}
 
-        Return as JSON only:
-        {{
-            "university": "{university}",
-            "country": "{country}",
-            "course": "{course}",
-            "requirements": {{
+    Task:
+    1. Estimate admission requirements for this course at this university.
+    2. Check if the student qualifies based on their score and subjects.
+    3. If NOT qualified or PARTIAL, suggest 3 similar courses as alternatives.
+
+    Similar courses can be:
+    - Same university, different course (with lower requirements)
+    - Different university, same course (with lower requirements)
+    - Same field, different specialization
+
+    For each similar course, explain WHY it's a good alternative.
+
+    Return as JSON only:
+    {{
+        "status": "qualified|partial|not_qualified",
+        "requirements": {{
+            "score_needed": 0,
+            "score_type": "{score_type}",
+            "subjects_needed": ["Subject1", "Subject2"]
+        }},
+        "result": {{
+            "message": "User-friendly message with emoji",
+            "details": "Detailed explanation of their chances",
+            "chance_percentage": 85
+        }},
+        "similar_courses": [
+            {{
+                "course": "Course name",
                 "score_needed": 0,
-                "score_type": "{score_type}",
-                "subjects_needed": ["Subject1", "Subject2"]
-            }},
-            "result": {{
-                "status": "qualified|partial|not_qualified|unknown",
-                "message": "User-friendly message with emoji",
-                "details": "Detailed explanation",
-                "chances": "Excellent|Good|Possible|Unlikely",
                 "chance_percentage": 85,
-                "score_gap": 0
+                "university": "University name",
+                "reason": "Why this is a good alternative"
             }}
-        }}
-        """
-        
-        # Try Gemini first
-        if self.gemini:
-            try:
-                response = self.gemini.generate_content(prompt)
-                result = self._parse_json(response.text)
-                result["recommendations"] = self._generate_combined_recommendations(
-                    status=result.get("result", {}).get("status", "unknown"),
-                    score_gap=result.get("result", {}).get("score_gap", 0),
-                    course=course,
-                    score_type=score_type
-                )
-                result["alternatives"] = self._generate_alternatives_with_percentages(
-                    university=university,
-                    course=course,
-                    score=score
-                )
-                return result
-            except Exception as e:
-                print(f"❌ Gemini failed: {e}")
-        
-        # Fallback to Groq
-        if self.groq:
-            try:
-                response = self.groq.chat.completions.create(
-                    model="mixtral-8x7b-32768",
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                result = self._parse_json(response.choices[0].message.content)
-                result["recommendations"] = self._generate_combined_recommendations(
-                    status=result.get("result", {}).get("status", "unknown"),
-                    score_gap=result.get("result", {}).get("score_gap", 0),
-                    course=course,
-                    score_type=score_type
-                )
-                result["alternatives"] = self._generate_alternatives_with_percentages(
-                    university=university,
-                    course=course,
-                    score=score
-                )
-                return result
-            except Exception as e:
-                print(f"❌ Groq failed: {e}")
-        
-        # Final fallback
-        return self._fallback_admission_check(university, course, score, score_type)
+        ],
+        "recommendations": [
+            {{
+                "type": "ai_advice",
+                "title": "Title",
+                "description": "Description"
+            }},
+            {{
+                "type": "app_feature",
+                "title": "Title",
+                "description": "Description",
+                "feature": "study_plan|weakness|practice|mistakes|revision"
+            }}
+        ]
+    }}
+    """
 
-    def _parse_json(self, text: str) -> dict:
-        """Extract JSON from AI response"""
+    # Try Gemini first
+    if self.gemini:
         try:
-            return json.loads(text)
-        except:
-            import re
-            match = re.search(r'\{.*\}', text, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group())
-                except:
-                    pass
-            return {}
+            response = self.gemini.generate_content(prompt)
+            result = self._parse_json(response.text)
+            # Ensure similar_courses exists
+            if "similar_courses" not in result:
+                result["similar_courses"] = []
+            return result
+        except Exception as e:
+            print(f"❌ Gemini failed: {e}")
 
-    def _generate_combined_recommendations(
-        self,
-        status: str,
-        score_gap: int,
-        course: str,
-        score_type: str
-    ) -> List[dict]:
-        """Generate mix of AI advice + app feature recommendations"""
-        
-        recommendations = []
-        
-        # AI Advice (user-friendly, no routes)
-        if status == "not_qualified" and score_gap > 50:
-            recommendations.append({
-                "type": "ai_advice",
-                "title": "📚 Consider Retaking Your Exam",
-                "description": f"Your score is {score_gap} points below the requirement. Focus on targeted practice to close this gap."
-            })
-        
-        if status in ["partial", "not_qualified"]:
-            recommendations.append({
-                "type": "ai_advice",
-                "title": "🎯 Focus on Your Weakest Subject",
-                "description": "Identify which subject is pulling your score down and dedicate extra time to it."
-            })
-        
-        if status == "qualified":
-            recommendations.append({
-                "type": "ai_advice",
-                "title": "🌟 Maintain Your Momentum",
-                "description": "Keep practicing to ensure you don't lose your edge. Stay consistent."
-            })
-        
-        recommendations.append({
-            "type": "ai_advice",
-            "title": "📝 Start Your Application Early",
-            "description": f"Applications for {course} at this university are highly competitive. Give yourself plenty of time to prepare."
-        })
-        
-        recommendations.append({
-            "type": "ai_advice",
-            "title": "🔍 Research the Program",
-            "description": f"Look into the specific modules, professors, and research opportunities in {course} at this university."
-        })
-        
-        # App Features (drive users into the app)
-        recommendations.append({
-            "type": "app_feature",
-            "title": "📚 Create Your Study Plan",
-            "description": f"Get a personalized study plan to improve your chances for {course}.",
-            "feature": "study_plan"
-        })
-        
-        if status in ["partial", "not_qualified"]:
-            recommendations.append({
-                "type": "app_feature",
-                "title": "🧠 Find Your Weak Areas",
-                "description": "Identify exactly where you're losing points and focus on improvement.",
-                "feature": "weakness"
-            })
-        
-        recommendations.append({
-            "type": "app_feature",
-            "title": "📝 Practice Daily",
-            "description": f"Practice {score_type.upper()} questions daily to build confidence and speed.",
-            "feature": "practice"
-        })
-        
-        if status in ["partial", "not_qualified"]:
-            recommendations.append({
-                "type": "app_feature",
-                "title": "📖 Track Your Mistakes",
-                "description": "Review and learn from your mistakes to avoid repeating them.",
-                "feature": "mistakes"
-            })
-        
-        if status == "qualified":
-            recommendations.append({
-                "type": "app_feature",
-                "title": "📅 Plan Your Revision",
-                "description": "Create a revision schedule to maintain your edge and stay on track.",
-                "feature": "revision"
-            })
-        
-        return recommendations
+    # Fallback to Groq
+    if self.groq:
+        try:
+            response = self.groq.chat.completions.create(
+                model="mixtral-8x7b-32768",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            result = self._parse_json(response.choices[0].message.content)
+            if "similar_courses" not in result:
+                result["similar_courses"] = []
+            return result
+        except Exception as e:
+            print(f"❌ Groq failed: {e}")
 
-    def _generate_alternatives_with_percentages(
-        self,
-        university: str,
-        course: str,
-        score: int
-    ) -> List[dict]:
-        """Generate alternative universities with percentage chances"""
-        
-        alternatives = [
+    # Fallback response
+    return {
+        "status": "unknown",
+        "requirements": {
+            "score_needed": "Check university website",
+            "score_type": score_type,
+            "subjects_needed": ["Check university website"]
+        },
+        "result": {
+            "message": "🔍 Check the university's official website",
+            "details": f"Admission requirements for {course} at {university} vary. Visit the admissions page.",
+            "chance_percentage": 50
+        },
+        "similar_courses": [],
+        "recommendations": [
             {
-                "university": "MIT",
-                "course": course,
-                "score_needed": 1500,
-                "chance_percentage": self._calculate_chance(score, 1500),
-                "message": "✅ You have an excellent chance at MIT with your current score." if score >= 1500 else "⚠️ MIT is competitive. Consider improving your score."
+                "type": "ai_advice",
+                "title": "🔍 Check Official Website",
+                "description": f"Visit {university}'s admissions page for accurate requirements."
             },
             {
-                "university": "Stanford",
-                "course": course,
-                "score_needed": 1530,
-                "chance_percentage": self._calculate_chance(score, 1530),
-                "message": "✅ Stanford is within reach!" if score >= 1530 else "⚠️ Stanford is a reach. Consider retaking your exam."
+                "type": "ai_advice",
+                "title": "📧 Contact Admissions Office",
+                "description": "Reach out to the admissions office directly for clarification."
+            },
+            {
+                "type": "app_feature",
+                "title": "📚 Create Your Study Plan",
+                "description": "Get a personalized study plan while you research.",
+                "feature": "study_plan"
             }
         ]
-        
-        return alternatives
-
-    def _calculate_chance(self, score: int, needed: int) -> int:
-        """Calculate percentage chance based on score vs requirement"""
-        if score >= needed:
-            base = 70
-            bonus = min((score - needed) // 10 * 5, 25)
-            return min(base + bonus, 98)
-        else:
-            base = max(0, 70 - (needed - score) // 5 * 5)
-            return min(base, 68)
-
-    def _fallback_admission_check(self, university: str, course: str, score: float, score_type: str) -> dict:
-        """Fallback response when AI fails"""
-        return {
-            "university": university,
-            "country": "Unknown",
-            "course": course,
-            "requirements": {
-                "score_needed": "Check university website",
-                "score_type": score_type or "unknown",
-                "subjects_needed": ["Check university website"]
-            },
-            "result": {
-                "status": "unknown",
-                "message": "⚠️ Could not verify admission requirements automatically.",
-                "details": f"Please check {university}'s official website for {course} admission requirements.",
-                "chances": "Unknown",
-                "chance_percentage": 50,
-                "score_gap": 0
-            },
-            "recommendations": [
-                {
-                    "type": "ai_advice",
-                    "title": "🔍 Check Official Website",
-                    "description": f"Visit {university}'s admissions page for accurate requirements."
-                },
-                {
-                    "type": "ai_advice",
-                    "title": "📧 Contact Admissions Office",
-                    "description": "Reach out to the admissions office directly for clarification."
-                },
-                {
-                    "type": "app_feature",
-                    "title": "📚 Create Your Study Plan",
-                    "description": "Get a personalized study plan while you research.",
-                    "feature": "study_plan"
-                }
-            ],
-            "alternatives": []
-        }
+    }
 
 
 # ============================================================
