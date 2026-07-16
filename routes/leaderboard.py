@@ -17,176 +17,17 @@ async def get_global_duel_leaderboard(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0)
 ):
-    """
-    Global duel leaderboard - ranked by duel performance
-    Shows: Wins, Win Rate, XP, Level, Streak
-    """
+    """Global duel leaderboard - ranked by duel performance"""
     
     results = db.query(
         User.id,
-        User.username,
-        User.full_name,
+        User.username,  # ✅ Using username
         User.avatar,
         User.school,
         UserStats.xp,
         UserStats.level,
         UserStats.current_streak,
         UserStats.longest_streak,
-        # Total duels played
-        func.count(Duel.id).label("total_duels"),
-        # Wins
-        func.sum(
-            case(
-                (Duel.winner_id == User.id, 1),
-                else_=0
-            )
-        ).label("wins"),
-        # Losses (completed duels where user is not winner and not null)
-        func.sum(
-            case(
-                (and_(Duel.winner_id != User.id, Duel.winner_id.isnot(None)), 1),
-                else_=0
-            )
-        ).label("losses"),
-        # Draws
-        func.sum(
-            case(
-                (Duel.winner_id.is_(None), 1),
-                else_=0
-            )
-        ).label("draws"),
-        # Win rate
-        func.coalesce(
-            func.sum(
-                case(
-                    (Duel.winner_id == User.id, 1),
-                    else_=0
-                )
-            ) * 100.0 / 
-            func.nullif(func.count(Duel.id), 0),
-            0
-        ).label("win_rate"),
-        # Average score (as challenger)
-        func.coalesce(
-            func.avg(
-                case(
-                    (Duel.challenger_id == User.id, Duel.challenger_score),
-                    else_=None
-                )
-            ),
-            0
-        ).label("avg_challenger_score"),
-        # Average score (as opponent)
-        func.coalesce(
-            func.avg(
-                case(
-                    (Duel.opponent_id == User.id, Duel.opponent_score),
-                    else_=None
-                )
-            ),
-            0
-        ).label("avg_opponent_score"),
-        # Total correct answers across all duels
-        func.coalesce(
-            func.sum(
-                case(
-                    (Duel.challenger_id == User.id, Duel.challenger_score),
-                    (Duel.opponent_id == User.id, Duel.opponent_score),
-                    else_=0
-                )
-            ),
-            0
-        ).label("total_correct")
-    ).join(
-        UserStats, User.id == UserStats.user_id, isouter=True
-    ).outerjoin(
-        Duel,
-        and_(
-            Duel.status == "completed",
-            (Duel.challenger_id == User.id) | (Duel.opponent_id == User.id)
-        )
-    ).filter(
-        User.is_active == True
-    ).group_by(
-        User.id, UserStats.id
-    ).order_by(
-        desc("wins"),  # Most wins first
-        desc("win_rate"),  # Then highest win rate
-        desc(UserStats.xp),  # Then XP
-        desc(UserStats.current_streak)  # Then streak
-    ).offset(offset).limit(limit).all()
-    
-    # Format response
-    leaderboard = []
-    for idx, row in enumerate(results, start=offset + 1):
-        total_duels = row.total_duels or 0
-        wins = row.wins or 0
-        losses = row.losses or 0
-        draws = row.draws or 0
-        win_rate = round(row.win_rate or 0, 1)
-        
-        # Calculate average score
-        avg_score = 0
-        if total_duels > 0:
-            total_score = (row.avg_challenger_score or 0) + (row.avg_opponent_score or 0)
-            avg_score = round(total_score / 2, 1) if total_duels > 0 else 0
-        
-        leaderboard.append({
-            "rank": idx,
-            "user_id": row.id,
-            "username": row.username,
-            "full_name": row.full_name,
-            "avatar": row.avatar,
-            "school": row.school,
-            "xp": row.xp or 0,
-            "level": row.level or 1,
-            "streak": row.current_streak or 0,
-            "longest_streak": row.longest_streak or 0,
-            "total_duels": total_duels,
-            "wins": wins,
-            "losses": losses,
-            "draws": draws,
-            "win_rate": win_rate,
-            "avg_score": avg_score,
-            "total_correct": row.total_correct or 0
-        })
-    
-    # Get total count for pagination
-    total_count = db.query(User).filter(User.is_active == True).count()
-    
-    return {
-        "leaderboard": leaderboard,
-        "total": total_count,
-        "limit": limit,
-        "offset": offset,
-        "next": offset + limit < total_count
-    }
-
-
-@router.get("/school")
-async def get_school_duel_leaderboard(
-    db: Session = Depends(get_db),
-    school: Optional[str] = None,
-    limit: int = Query(50, ge=1, le=100),
-    current_user: User = Depends(get_current_user)
-):
-    """Get duel leaderboard filtered by school"""
-    
-    # If no school provided, use current user's school
-    if not school:
-        school = current_user.school
-        if not school:
-            raise HTTPException(400, "No school specified and user has no school set")
-    
-    results = db.query(
-        User.id,
-        User.username,
-        User.full_name,
-        User.avatar,
-        User.school,
-        UserStats.xp,
-        UserStats.level,
-        UserStats.current_streak,
         func.count(Duel.id).label("total_duels"),
         func.sum(
             case(
@@ -225,6 +66,100 @@ async def get_school_duel_leaderboard(
             (Duel.challenger_id == User.id) | (Duel.opponent_id == User.id)
         )
     ).filter(
+        User.is_active == True
+    ).group_by(
+        User.id, UserStats.id
+    ).order_by(
+        desc("wins"),
+        desc("win_rate"),
+        desc(UserStats.xp),
+        desc(UserStats.current_streak)
+    ).offset(offset).limit(limit).all()
+    
+    leaderboard = []
+    for idx, row in enumerate(results, start=offset + 1):
+        total_duels = row.total_duels or 0
+        wins = row.wins or 0
+        losses = row.losses or 0
+        draws = row.draws or 0
+        win_rate = round(row.win_rate or 0, 1)
+        
+        leaderboard.append({
+            "rank": idx,
+            "user_id": row.id,
+            "username": row.username,  # ✅ Using username
+            "avatar": row.avatar,
+            "school": row.school,
+            "xp": row.xp or 0,
+            "level": row.level or 1,
+            "streak": row.current_streak or 0,
+            "longest_streak": row.longest_streak or 0,
+            "total_duels": total_duels,
+            "wins": wins,
+            "losses": losses,
+            "draws": draws,
+            "win_rate": win_rate
+        })
+    
+    total_count = db.query(User).filter(User.is_active == True).count()
+    
+    return {
+        "leaderboard": leaderboard,
+        "total": total_count,
+        "limit": limit,
+        "offset": offset,
+        "next": offset + limit < total_count
+    }
+
+
+@router.get("/school")
+async def get_school_duel_leaderboard(
+    db: Session = Depends(get_db),
+    school: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(get_current_user)
+):
+    """Get duel leaderboard filtered by school"""
+    
+    if not school:
+        school = current_user.school
+        if not school:
+            raise HTTPException(400, "No school specified and user has no school set")
+    
+    results = db.query(
+        User.id,
+        User.username,  # ✅ Using username
+        User.avatar,
+        User.school,
+        UserStats.xp,
+        UserStats.level,
+        UserStats.current_streak,
+        func.count(Duel.id).label("total_duels"),
+        func.sum(
+            case(
+                (Duel.winner_id == User.id, 1),
+                else_=0
+            )
+        ).label("wins"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (Duel.winner_id == User.id, 1),
+                    else_=0
+                )
+            ) * 100.0 / 
+            func.nullif(func.count(Duel.id), 0),
+            0
+        ).label("win_rate")
+    ).join(
+        UserStats, User.id == UserStats.user_id, isouter=True
+    ).outerjoin(
+        Duel,
+        and_(
+            Duel.status == "completed",
+            (Duel.challenger_id == User.id) | (Duel.opponent_id == User.id)
+        )
+    ).filter(
         User.is_active == True,
         User.school.ilike(f"%{school}%")
     ).group_by(
@@ -239,15 +174,12 @@ async def get_school_duel_leaderboard(
     for idx, row in enumerate(results, start=1):
         total_duels = row.total_duels or 0
         wins = row.wins or 0
-        losses = row.losses or 0
-        draws = row.draws or 0
         win_rate = round(row.win_rate or 0, 1)
         
         leaderboard.append({
             "rank": idx,
             "user_id": row.id,
-            "username": row.username,
-            "full_name": row.full_name,
+            "username": row.username,  # ✅ Using username
             "avatar": row.avatar,
             "school": row.school,
             "xp": row.xp or 0,
@@ -255,8 +187,6 @@ async def get_school_duel_leaderboard(
             "streak": row.current_streak or 0,
             "total_duels": total_duels,
             "wins": wins,
-            "losses": losses,
-            "draws": draws,
             "win_rate": win_rate
         })
     
@@ -271,7 +201,6 @@ async def get_friends_duel_leaderboard(
 ):
     """Get duel leaderboard for user's friends/connections"""
     
-    # Get users from same school (acts as friends for now)
     friends = db.query(User).filter(
         User.is_active == True,
         User.school == current_user.school,
@@ -279,12 +208,11 @@ async def get_friends_duel_leaderboard(
     ).limit(limit).all()
     
     friend_ids = [f.id for f in friends]
-    friend_ids.append(current_user.id)  # Include current user
+    friend_ids.append(current_user.id)
     
     results = db.query(
         User.id,
-        User.username,
-        User.full_name,
+        User.username,  # ✅ Using username
         User.avatar,
         User.school,
         UserStats.xp,
@@ -334,8 +262,7 @@ async def get_friends_duel_leaderboard(
         leaderboard.append({
             "rank": idx,
             "user_id": row.id,
-            "username": row.username,
-            "full_name": row.full_name,
+            "username": row.username,  # ✅ Using username
             "avatar": row.avatar,
             "school": row.school,
             "xp": row.xp or 0,
@@ -361,7 +288,6 @@ async def get_user_duel_rank(
     if not user:
         raise HTTPException(404, "User not found")
     
-    # Get user stats
     stats = db.query(UserStats).filter(UserStats.user_id == user_id).first()
     
     # Calculate duel stats
@@ -378,16 +304,14 @@ async def get_user_duel_rank(
     
     # Calculate rank (by wins)
     rank = db.query(UserStats).filter(
-        UserStats.id != (stats.id if stats else 0),
         UserStats.duel_wins > (stats.duel_wins if stats else 0)
-    ).count() + 1
+    ).count() + 1 if stats else 1
     
     total_users = db.query(User).filter(User.is_active == True).count()
     
     return {
         "user_id": user.id,
-        "username": user.username,
-        "full_name": user.full_name,
+        "username": user.username,  # ✅ Using username
         "avatar": user.avatar,
         "school": user.school,
         "rank": rank,
@@ -416,11 +340,9 @@ async def get_weekly_duel_leaderboard(
     
     weekly_results = db.query(
         User.id,
-        User.username,
-        User.full_name,
+        User.username,  # ✅ Using username
         User.avatar,
         User.school,
-        # Count wins in last week
         func.count(Duel.id).label("weekly_duels"),
         func.sum(
             case(
@@ -428,7 +350,6 @@ async def get_weekly_duel_leaderboard(
                 else_=0
             )
         ).label("weekly_wins"),
-        # Total XP earned this week from duels
         func.sum(
             case(
                 (Duel.winner_id == User.id, 50),
@@ -454,8 +375,7 @@ async def get_weekly_duel_leaderboard(
         results.append({
             "rank": idx,
             "user_id": row.id,
-            "username": row.username,
-            "full_name": row.full_name,
+            "username": row.username,  # ✅ Using username
             "avatar": row.avatar,
             "school": row.school,
             "weekly_duels": row.weekly_duels or 0,
@@ -476,8 +396,7 @@ async def get_subject_duel_leaderboard(
     
     results = db.query(
         User.id,
-        User.username,
-        User.full_name,
+        User.username,  # ✅ Using username
         User.avatar,
         User.school,
         UserStats.xp,
@@ -539,8 +458,7 @@ async def get_subject_duel_leaderboard(
         leaderboard.append({
             "rank": idx,
             "user_id": row.id,
-            "username": row.username,
-            "full_name": row.full_name,
+            "username": row.username,  # ✅ Using username
             "avatar": row.avatar,
             "school": row.school,
             "xp": row.xp or 0,
