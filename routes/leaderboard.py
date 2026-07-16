@@ -1,253 +1,348 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, desc, and_
 from typing import Optional, List
 from datetime import datetime, timedelta
-import random
 
 from database import get_db
-from models import User, Duel, Question, UserStats
-from schemas import DuelCreate, DuelJoin, DuelSubmit, DuelResponse
-from dependencies import get_current_user
+from models import User, UserStats, Duel, Session as PracticeSession
+from dependencies import get_current_user, get_current_admin_user
 
 router = APIRouter()
 
 
-@router.post("/create")
-async def create_duel(
-    data: DuelCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+@router.get("/global")
+async def get_global_leaderboard(
+    db: Session = Depends(get_db),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0)
 ):
-    """Create a new duel challenge"""
-    # Check opponent exists
-    opponent = db.query(User).filter(User.id == data.opponent_id).first()
-    if not opponent:
-        raise HTTPException(status_code=404, detail="Opponent not found")
+    """Get global leaderboard with proper XP calculation"""
     
-    if opponent.id == current_user.id:
-        raise HTTPException(status_code=400, detail="Cannot duel yourself")
+    # ✅ OPTIMIZED: Single query with join
+    results = db.query(
+        User.id,
+        User.username,
+        User.full_name,
+        User.avatar,
+        User.school,
+        UserStats.xp,
+        UserStats.level,
+        UserStats.current_streak,
+        UserStats.longest_streak,
+        # Calculate accuracy from all practice sessions
+        func.coalesce(
+            func.sum(PracticeSession.correct) * 100.0 / 
+            func.nullif(func.sum(PracticeSession.total_questions), 0),
+            0
+        ).label("accuracy")
+    ).join(
+        UserStats, User.id == UserStats.user_id, isouter=True
+    ).outerjoin(
+        PracticeSession, User.id == PracticeSession.user_id
+    ).filter(
+        User.is_active == True
+    ).group_by(
+        User.id, UserStats.id
+    ).order_by(
+        desc(UserStats.xp),
+        desc(UserStats.current_streak),
+        desc("accuracy")
+    ).offset(offset).limit(limit).all()
     
-    # Get questions
-    query = db.query(Question).filter(Question.subject.ilike(data.subject))
-    if data.topic:
-        query = query.filter(Question.topic.ilike(data.topic))
+    # Format response
+    leaderboard = []
+    for idx, row in enumerate(results, start=offset + 1):
+        leaderboard.append({
+            "rank": idx,
+            "user_id": row.id,
+            "username": row.username,
+            "full_name": row.full_name,
+            "avatar": row.avatar,
+            "school": row.school,
+            "xp": row.xp or 0,
+            "level": row.level or 1,
+            "streak": row.current_streak or 0,
+            "longest_streak": row.longest_streak or 0,
+            "accuracy": round(row.accuracy or 0, 1)
+        })
     
-    questions = query.all()
-    if len(questions) < data.count:
-        raise HTTPException(status_code=400, detail="Not enough questions available")
-    
-    # Select random questions
-    selected_questions = random.sample(questions, data.count)
-    
-    # Create duel
-    duel = Duel(
-        challenger_id=current_user.id,
-        opponent_id=data.opponent_id,
-        subject=data.subject,
-        topic=data.topic,
-        question_ids=[q.id for q in selected_questions],
-        status="pending",
-        time_limit=data.time_limit,
-        challenger_score=0,
-        opponent_score=0
-    )
-    db.add(duel)
-    db.commit()
-    db.refresh(duel)
+    # Get total count for pagination
+    total_count = db.query(User).filter(User.is_active == True).count()
     
     return {
-        "duel_id": duel.id,
-        "message": "Duel created successfully",
-        "challenger": current_user.username,
-        "opponent": opponent.username,
-        "subject": duel.subject,
-        "questions_count": len(selected_questions),
-        "time_limit": duel.time_limit,
-        "status": duel.status
+        "leaderboard": leaderboard,
+        "total": total_count,
+        "limit": limit,
+        "offset": offset,
+        "next": offset + limit < total_count
     }
 
 
-@router.post("/join")
-async def join_duel(
-    data: DuelJoin,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+@router.get("/school")
+async def get_school_leaderboard(
+    school: str,
+    db: Session = Depends(get_db),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(get_current_user)
 ):
-    """Join a pending duel"""
-    duel = db.query(Duel).filter(Duel.id == data.duel_id).first()
-    if not duel:
-        raise HTTPException(status_code=404, detail="Duel not found")
+    """Get leaderboard filtered by school"""
     
-    if duel.status != "pending":
-        raise HTTPException(status_code=400, detail="Duel already started or completed")
+    results = db.query(
+        User.id,
+        User.username,
+        User.full_name,
+        User.avatar,
+        User.school,
+        UserStats.xp,
+        UserStats.level,
+        UserStats.current_streak,
+        func.coalesce(
+            func.sum(PracticeSession.correct) * 100.0 / 
+            func.nullif(func.sum(PracticeSession.total_questions), 0),
+            0
+        ).label("accuracy")
+    ).join(
+        UserStats, User.id == UserStats.user_id, isouter=True
+    ).outerjoin(
+        PracticeSession, User.id == PracticeSession.user_id
+    ).filter(
+        User.is_active == True,
+        User.school.ilike(f"%{school}%")
+    ).group_by(
+        User.id, UserStats.id
+    ).order_by(
+        desc(UserStats.xp)
+    ).limit(limit).all()
     
-    if duel.challenger_id == current_user.id:
-        raise HTTPException(status_code=400, detail="You already created this duel")
+    leaderboard = []
+    for idx, row in enumerate(results, start=1):
+        leaderboard.append({
+            "rank": idx,
+            "user_id": row.id,
+            "username": row.username,
+            "full_name": row.full_name,
+            "avatar": row.avatar,
+            "school": row.school,
+            "xp": row.xp or 0,
+            "level": row.level or 1,
+            "streak": row.current_streak or 0,
+            "accuracy": round(row.accuracy or 0, 1)
+        })
     
-    if duel.opponent_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You are not the opponent")
-    
-    # Get questions
-    questions = db.query(Question).filter(Question.id.in_(duel.question_ids)).all()
-    
-    # Format questions for response
-    questions_data = [
-        {
-            "id": q.id,
-            "question": q.question,
-            "options": q.options,
-            "type": q.type,
-            "difficulty": q.difficulty.value if hasattr(q.difficulty, 'value') else q.difficulty,
-            "topic": q.topic,
-            "subject": q.subject
-        }
-        for q in questions
-    ]
-    
-    duel.status = "active"
-    db.commit()
-    
-    return {
-        "duel_id": duel.id,
-        "subject": duel.subject,
-        "topic": duel.topic,
-        "questions": questions_data,
-        "time_limit": duel.time_limit,
-        "challenger": db.query(User).filter(User.id == duel.challenger_id).first().username,
-        "opponent": db.query(User).filter(User.id == duel.opponent_id).first().username
-    }
+    return leaderboard
 
 
-@router.post("/submit")
-async def submit_duel(
-    data: DuelSubmit,
+@router.get("/friends")
+async def get_friends_leaderboard(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    limit: int = Query(20, ge=1, le=50)
 ):
-    """Submit answers for a duel"""
-    duel = db.query(Duel).filter(Duel.id == data.duel_id).first()
-    if not duel:
-        raise HTTPException(status_code=404, detail="Duel not found")
+    """Get leaderboard for user's friends/connections"""
     
-    if duel.status != "active":
-        raise HTTPException(status_code=400, detail="Duel not active")
+    # Get user's friends (simplified - you'll need a Friends table)
+    # For now, get users from same school
+    friends = db.query(User).filter(
+        User.is_active == True,
+        User.school == current_user.school,
+        User.id != current_user.id
+    ).limit(limit).all()
     
-    # Determine if user is challenger or opponent
-    is_challenger = duel.challenger_id == current_user.id
-    is_opponent = duel.opponent_id == current_user.id
+    friend_ids = [f.id for f in friends]
     
-    if not is_challenger and not is_opponent:
-        raise HTTPException(status_code=403, detail="You are not part of this duel")
+    # Include current user
+    friend_ids.append(current_user.id)
     
-    # Get questions for scoring
-    questions = db.query(Question).filter(Question.id.in_(duel.question_ids)).all()
-    question_map = {q.id: q for q in questions}
+    results = db.query(
+        User.id,
+        User.username,
+        User.full_name,
+        User.avatar,
+        User.school,
+        UserStats.xp,
+        UserStats.level,
+        UserStats.current_streak
+    ).join(
+        UserStats, User.id == UserStats.user_id
+    ).filter(
+        User.id.in_(friend_ids)
+    ).order_by(
+        desc(UserStats.xp)
+    ).all()
     
-    # Calculate score
-    correct = 0
-    for q_id in duel.question_ids:
-        user_answer = data.answers.get(q_id)
-        q = question_map.get(q_id)
-        if q and user_answer == q.answer:
-            correct += 1
+    leaderboard = []
+    for idx, row in enumerate(results, start=1):
+        is_current = row.id == current_user.id
+        leaderboard.append({
+            "rank": idx,
+            "user_id": row.id,
+            "username": row.username,
+            "full_name": row.full_name,
+            "avatar": row.avatar,
+            "school": row.school,
+            "xp": row.xp or 0,
+            "level": row.level or 1,
+            "streak": row.current_streak or 0,
+            "is_current_user": is_current
+        })
     
-    # Store answers and score
-    if is_challenger:
-        duel.challenger_answers = data.answers
-        duel.challenger_score = correct
-    else:
-        duel.opponent_answers = data.answers
-        duel.opponent_score = correct
-    
-    # Check if both players have submitted
-    if duel.challenger_answers and duel.opponent_answers:
-        duel.status = "completed"
-        duel.completed_at = datetime.utcnow()
-        
-        # Determine winner
-        if duel.challenger_score > duel.opponent_score:
-            duel.winner_id = duel.challenger_id
-        elif duel.opponent_score > duel.challenger_score:
-            duel.winner_id = duel.opponent_id
-        else:
-            duel.winner_id = None  # Draw
-        
-        # Award XP (simplified)
-        if duel.winner_id:
-            winner_stats = db.query(UserStats).filter(UserStats.user_id == duel.winner_id).first()
-            if winner_stats:
-                winner_stats.xp += 50
-                winner_stats.level = min(winner_stats.xp // 100 + 1, 20)
-    
-    db.commit()
-    
-    # Return current submission status
-    return {
-        "duel_id": duel.id,
-        "submitted": True,
-        "your_score": correct,
-        "status": duel.status,
-        "challenger_score": duel.challenger_score if duel.challenger_answers else None,
-        "opponent_score": duel.opponent_score if duel.opponent_answers else None,
-        "winner": db.query(User).filter(User.id == duel.winner_id).first().username if duel.winner_id else None
-    }
+    return leaderboard
 
 
-@router.get("/history")
-async def get_duel_history(
-    current_user: User = Depends(get_current_user),
+@router.get("/subject")
+async def get_subject_leaderboard(
+    subject: str,
     db: Session = Depends(get_db),
     limit: int = Query(50, ge=1, le=100)
 ):
-    """Get user's duel history"""
-    duels = db.query(Duel).filter(
-        (Duel.challenger_id == current_user.id) | (Duel.opponent_id == current_user.id),
-        Duel.status == "completed"
-    ).order_by(Duel.completed_at.desc()).limit(limit).all()
+    """Get leaderboard for a specific subject"""
     
-    history = []
-    for duel in duels:
-        challenger = db.query(User).filter(User.id == duel.challenger_id).first()
-        opponent = db.query(User).filter(User.id == duel.opponent_id).first()
-        
-        history.append({
-            "id": duel.id,
-            "challenger": challenger.username,
-            "opponent": opponent.username,
-            "challenger_score": duel.challenger_score,
-            "opponent_score": duel.opponent_score,
-            "winner": challenger.username if duel.winner_id == duel.challenger_id else opponent.username if duel.winner_id else "Draw",
-            "subject": duel.subject,
-            "completed_at": duel.completed_at
+    # This requires a SubjectStats table
+    # For now, use practice sessions
+    results = db.query(
+        User.id,
+        User.username,
+        User.full_name,
+        User.avatar,
+        UserStats.xp,
+        func.count(PracticeSession.id).label("sessions"),
+        func.sum(PracticeSession.correct).label("correct"),
+        func.sum(PracticeSession.total_questions).label("total")
+    ).join(
+        UserStats, User.id == UserStats.user_id
+    ).join(
+        PracticeSession, User.id == PracticeSession.user_id
+    ).filter(
+        User.is_active == True,
+        PracticeSession.subject.ilike(subject),
+        PracticeSession.completed_at.isnot(None)
+    ).group_by(
+        User.id, UserStats.id
+    ).having(
+        func.sum(PracticeSession.total_questions) > 0
+    ).order_by(
+        desc(func.sum(PracticeSession.correct))
+    ).limit(limit).all()
+    
+    leaderboard = []
+    for idx, row in enumerate(results, start=1):
+        accuracy = (row.correct / row.total * 100) if row.total > 0 else 0
+        leaderboard.append({
+            "rank": idx,
+            "user_id": row.id,
+            "username": row.username,
+            "full_name": row.full_name,
+            "avatar": row.avatar,
+            "xp": row.xp or 0,
+            "sessions": row.sessions or 0,
+            "correct": row.correct or 0,
+            "total": row.total or 0,
+            "accuracy": round(accuracy, 1)
         })
     
-    return history
+    return leaderboard
 
 
-@router.get("/{duel_id}")
-async def get_duel_status(
-    duel_id: int,
-    current_user: User = Depends(get_current_user),
+@router.get("")
+async def get_leaderboard(
+    filter_type: str = Query("global", regex="^(global|school|friends|subject)$"),
+    subject: Optional[str] = None,
+    school: Optional[str] = None,
+    db: Session = Depends(get_db),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(get_current_user)
+):
+    """Combined leaderboard endpoint"""
+    
+    if filter_type == "global":
+        return await get_global_leaderboard(db, limit, 0)
+    elif filter_type == "school":
+        if not school:
+            school = current_user.school
+        return await get_school_leaderboard(school, db, limit, current_user)
+    elif filter_type == "friends":
+        return await get_friends_leaderboard(current_user, db, limit)
+    elif filter_type == "subject":
+        if not subject:
+            raise HTTPException(400, "Subject is required for subject filter")
+        return await get_subject_leaderboard(subject, db, limit)
+    
+    return {"error": "Invalid filter"}
+
+
+@router.get("/user/{user_id}")
+async def get_user_rank(
+    user_id: int,
     db: Session = Depends(get_db)
 ):
-    """Get duel status"""
-    duel = db.query(Duel).filter(Duel.id == duel_id).first()
-    if not duel:
-        raise HTTPException(status_code=404, detail="Duel not found")
+    """Get a specific user's rank and stats"""
     
-    challenger = db.query(User).filter(User.id == duel.challenger_id).first()
-    opponent = db.query(User).filter(User.id == duel.opponent_id).first()
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    
+    # Get user stats
+    stats = db.query(UserStats).filter(UserStats.user_id == user_id).first()
+    
+    # Calculate rank
+    rank = db.query(UserStats).filter(
+        UserStats.xp > (stats.xp if stats else 0)
+    ).count() + 1
+    
+    total_users = db.query(User).filter(User.is_active == True).count()
     
     return {
-        "id": duel.id,
-        "challenger": challenger.username,
-        "opponent": opponent.username if opponent else "Waiting for opponent",
-        "subject": duel.subject,
-        "topic": duel.topic,
-        "status": duel.status,
-        "challenger_score": duel.challenger_score,
-        "opponent_score": duel.opponent_score,
-        "winner": challenger.username if duel.winner_id == duel.challenger_id else opponent.username if duel.winner_id else "Draw",
-        "created_at": duel.created_at,
-        "completed_at": duel.completed_at
+        "user_id": user.id,
+        "username": user.username,
+        "full_name": user.full_name,
+        "avatar": user.avatar,
+        "school": user.school,
+        "rank": rank,
+        "total_users": total_users,
+        "xp": stats.xp if stats else 0,
+        "level": stats.level if stats else 1,
+        "streak": stats.current_streak if stats else 0,
+        "top_percent": round((1 - rank / total_users) * 100, 1) if total_users > 0 else 0
     }
+
+
+@router.get("/weekly")
+async def get_weekly_leaderboard(
+    db: Session = Depends(get_db),
+    limit: int = Query(20, ge=1, le=50)
+):
+    """Get weekly XP leaders"""
+    
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    
+    # Get XP earned in the last week from practice sessions
+    weekly_xp = db.query(
+        User.id,
+        User.username,
+        User.full_name,
+        User.avatar,
+        func.sum(PracticeSession.xp_earned).label("weekly_xp")
+    ).join(
+        User, PracticeSession.user_id == User.id
+    ).filter(
+        PracticeSession.completed_at >= week_ago,
+        User.is_active == True
+    ).group_by(
+        User.id
+    ).order_by(
+        desc("weekly_xp")
+    ).limit(limit).all()
+    
+    results = []
+    for idx, row in enumerate(weekly_xp, start=1):
+        results.append({
+            "rank": idx,
+            "user_id": row.id,
+            "username": row.username,
+            "full_name": row.full_name,
+            "avatar": row.avatar,
+            "weekly_xp": row.weekly_xp or 0
+        })
+    
+    return results
