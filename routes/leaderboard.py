@@ -26,7 +26,7 @@ async def get_global_duel_leaderboard(
     results = db.query(
         User.id,
         User.username,
-        User.avatar,
+        User.avatar_url,  # ✅ FIXED: avatar → avatar_url
         User.school,
         UserStats.xp,
         UserStats.level,
@@ -92,7 +92,7 @@ async def get_global_duel_leaderboard(
             "rank": idx,
             "user_id": row.id,
             "username": row.username,
-            "avatar": row.avatar,
+            "avatar": row.avatar_url,  # ✅ FIXED: avatar_url
             "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
@@ -137,7 +137,7 @@ async def get_school_duel_leaderboard(
     results = db.query(
         User.id,
         User.username,
-        User.avatar,
+        User.avatar_url,  # ✅ FIXED
         User.school,
         UserStats.xp,
         UserStats.level,
@@ -188,7 +188,7 @@ async def get_school_duel_leaderboard(
             "rank": idx,
             "user_id": row.id,
             "username": row.username,
-            "avatar": row.avatar,
+            "avatar": row.avatar_url,  # ✅ FIXED
             "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
@@ -225,7 +225,7 @@ async def get_friends_duel_leaderboard(
     results = db.query(
         User.id,
         User.username,
-        User.avatar,
+        User.avatar_url,  # ✅ FIXED
         User.school,
         UserStats.xp,
         UserStats.level,
@@ -275,7 +275,7 @@ async def get_friends_duel_leaderboard(
             "rank": idx,
             "user_id": row.id,
             "username": row.username,
-            "avatar": row.avatar,
+            "avatar": row.avatar_url,  # ✅ FIXED
             "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
@@ -328,8 +328,8 @@ async def get_user_duel_rank(
     return {
         "user_id": user.id,
         "username": user.username,
-        "name": user.username,  # For frontend compatibility
-        "avatar": user.avatar,
+        "name": user.username,
+        "avatar": user.avatar_url,  # ✅ FIXED
         "school": user.school or "Unknown",
         "rank": rank,
         "total_users": total_users,
@@ -362,7 +362,7 @@ async def get_weekly_duel_leaderboard(
     weekly_results = db.query(
         User.id,
         User.username,
-        User.avatar,
+        User.avatar_url,  # ✅ FIXED
         User.school,
         func.count(Duel.id).label("weekly_duels"),
         func.sum(
@@ -397,8 +397,8 @@ async def get_weekly_duel_leaderboard(
             "rank": idx,
             "user_id": row.id,
             "username": row.username,
-            "name": row.username,  # For frontend compatibility
-            "avatar": row.avatar,
+            "name": row.username,
+            "avatar": row.avatar_url,  # ✅ FIXED
             "school": row.school or "Unknown",
             "weekly_duels": row.weekly_duels or 0,
             "weekly_wins": row.weekly_wins or 0,
@@ -423,7 +423,7 @@ async def get_subject_duel_leaderboard(
     results = db.query(
         User.id,
         User.username,
-        User.avatar,
+        User.avatar_url,  # ✅ FIXED
         User.school,
         UserStats.xp,
         UserStats.level,
@@ -485,8 +485,8 @@ async def get_subject_duel_leaderboard(
             "rank": idx,
             "user_id": row.id,
             "username": row.username,
-            "name": row.username,  # For frontend compatibility
-            "avatar": row.avatar,
+            "name": row.username,
+            "avatar": row.avatar_url,  # ✅ FIXED
             "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
@@ -514,22 +514,6 @@ async def get_duel_leaderboard(
 ):
     """
     Combined duel leaderboard endpoint - MATCHES FRONTEND EXPECTATIONS
-    
-    Frontend expects:
-    {
-        "rankings": [
-            {
-                "rank": 1,
-                "name": "John Doe",
-                "xp": 12450,
-                "level": 25,
-                "streak": 12,
-                "school": "UNILAG"
-            }
-        ],
-        "totalUsers": 2847,
-        "filter": "global"
-    }
     """
     
     if filter_type == "global":
@@ -598,7 +582,7 @@ async def get_duel_leaderboard(
                     "name": item["username"],
                     "xp": item["xp"],
                     "level": item["level"],
-                    "streak": 0,  # Subject doesn't track streak
+                    "streak": 0,
                     "school": item["school"] or "Unknown",
                     "avg_score": item.get("avg_score", 0)
                 }
