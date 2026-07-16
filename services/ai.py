@@ -454,140 +454,149 @@ class AIService:
         return []
 
     # ============================================================
-    # 6. NEW: CHECK ADMISSION ELIGIBILITY (Global Course Finder)
+    # 6. CHECK ADMISSION ELIGIBILITY (Global Course Finder)
     # ============================================================
+    async def course_finder_check(
+        self,
+        university: str,
+        country: str,
+        course: str,
+        score: float,
+        score_type: str,
+        subjects: List[str]
+    ) -> dict:
+        """
+        Course Finder — AI checks admission + suggests similar courses if not qualified.
+        """
+        prompt = f"""
+        You are a global university admissions advisor.
 
-    
-        async def course_finder_check(
-    self,
-    university: str,
-    country: str,
-    course: str,
-    score: float,
-    score_type: str,
-    subjects: List[str]
-) -> dict:
-    """
-    Course Finder — AI checks admission + suggests similar courses if not qualified.
-    """
-    
-    prompt = f"""
-    You are a global university admissions advisor.
+        Student wants to study {course} at {university} in {country}.
+        Score: {score} ({score_type})
+        Subjects: {', '.join(subjects)}
 
-    Student wants to study {course} at {university} in {country}.
-    Score: {score} ({score_type})
-    Subjects: {', '.join(subjects)}
+        Task:
+        1. Estimate admission requirements for this course at this university.
+        2. Check if the student qualifies based on their score and subjects.
+        3. If NOT qualified or PARTIAL, suggest 3 similar courses as alternatives.
 
-    Task:
-    1. Estimate admission requirements for this course at this university.
-    2. Check if the student qualifies based on their score and subjects.
-    3. If NOT qualified or PARTIAL, suggest 3 similar courses as alternatives.
+        Similar courses can be:
+        - Same university, different course (with lower requirements)
+        - Different university, same course (with lower requirements)
+        - Same field, different specialization
 
-    Similar courses can be:
-    - Same university, different course (with lower requirements)
-    - Different university, same course (with lower requirements)
-    - Same field, different specialization
+        For each similar course, explain WHY it's a good alternative.
 
-    For each similar course, explain WHY it's a good alternative.
-
-    Return as JSON only:
-    {{
-        "status": "qualified|partial|not_qualified",
-        "requirements": {{
-            "score_needed": 0,
-            "score_type": "{score_type}",
-            "subjects_needed": ["Subject1", "Subject2"]
-        }},
-        "result": {{
-            "message": "User-friendly message with emoji",
-            "details": "Detailed explanation of their chances",
-            "chance_percentage": 85
-        }},
-        "similar_courses": [
-            {{
-                "course": "Course name",
+        Return as JSON only:
+        {{
+            "status": "qualified|partial|not_qualified",
+            "requirements": {{
                 "score_needed": 0,
-                "chance_percentage": 85,
-                "university": "University name",
-                "reason": "Why this is a good alternative"
-            }}
-        ],
-        "recommendations": [
-            {{
-                "type": "ai_advice",
-                "title": "Title",
-                "description": "Description"
+                "score_type": "{score_type}",
+                "subjects_needed": ["Subject1", "Subject2"]
             }},
-            {{
-                "type": "app_feature",
-                "title": "Title",
-                "description": "Description",
-                "feature": "study_plan|weakness|practice|mistakes|revision"
-            }}
-        ]
-    }}
-    """
+            "result": {{
+                "message": "User-friendly message with emoji",
+                "details": "Detailed explanation of their chances",
+                "chance_percentage": 85
+            }},
+            "similar_courses": [
+                {{
+                    "course": "Course name",
+                    "score_needed": 0,
+                    "chance_percentage": 85,
+                    "university": "University name",
+                    "reason": "Why this is a good alternative"
+                }}
+            ],
+            "recommendations": [
+                {{
+                    "type": "ai_advice",
+                    "title": "Title",
+                    "description": "Description"
+                }},
+                {{
+                    "type": "app_feature",
+                    "title": "Title",
+                    "description": "Description",
+                    "feature": "study_plan|weakness|practice|mistakes|revision"
+                }}
+            ]
+        }}
+        """
 
-    # Try Gemini first
-    if self.gemini:
-        try:
-            response = self.gemini.generate_content(prompt)
-            result = self._parse_json(response.text)
-            # Ensure similar_courses exists
-            if "similar_courses" not in result:
-                result["similar_courses"] = []
-            return result
-        except Exception as e:
-            print(f"❌ Gemini failed: {e}")
+        # Try Gemini first
+        if self.gemini:
+            try:
+                response = self.gemini.generate_content(prompt)
+                result = self._parse_json(response.text)
+                # Ensure similar_courses exists
+                if "similar_courses" not in result:
+                    result["similar_courses"] = []
+                return result
+            except Exception as e:
+                print(f"❌ Gemini failed: {e}")
 
-    # Fallback to Groq
-    if self.groq:
-        try:
-            response = self.groq.chat.completions.create(
-                model="mixtral-8x7b-32768",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            result = self._parse_json(response.choices[0].message.content)
-            if "similar_courses" not in result:
-                result["similar_courses"] = []
-            return result
-        except Exception as e:
-            print(f"❌ Groq failed: {e}")
+        # Fallback to Groq
+        if self.groq:
+            try:
+                response = self.groq.chat.completions.create(
+                    model="mixtral-8x7b-32768",
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                result = self._parse_json(response.choices[0].message.content)
+                if "similar_courses" not in result:
+                    result["similar_courses"] = []
+                return result
+            except Exception as e:
+                print(f"❌ Groq failed: {e}")
 
-    # Fallback response
-    return {
-        "status": "unknown",
-        "requirements": {
-            "score_needed": "Check university website",
-            "score_type": score_type,
-            "subjects_needed": ["Check university website"]
-        },
-        "result": {
-            "message": "🔍 Check the university's official website",
-            "details": f"Admission requirements for {course} at {university} vary. Visit the admissions page.",
-            "chance_percentage": 50
-        },
-        "similar_courses": [],
-        "recommendations": [
-            {
-                "type": "ai_advice",
-                "title": "🔍 Check Official Website",
-                "description": f"Visit {university}'s admissions page for accurate requirements."
+        # Fallback response
+        return {
+            "status": "unknown",
+            "requirements": {
+                "score_needed": "Check university website",
+                "score_type": score_type,
+                "subjects_needed": ["Check university website"]
             },
-            {
-                "type": "ai_advice",
-                "title": "📧 Contact Admissions Office",
-                "description": "Reach out to the admissions office directly for clarification."
+            "result": {
+                "message": "🔍 Check the university's official website",
+                "details": f"Admission requirements for {course} at {university} vary. Visit the admissions page.",
+                "chance_percentage": 50
             },
-            {
-                "type": "app_feature",
-                "title": "📚 Create Your Study Plan",
-                "description": "Get a personalized study plan while you research.",
-                "feature": "study_plan"
-            }
-        ]
-    }
+            "similar_courses": [],
+            "recommendations": [
+                {
+                    "type": "ai_advice",
+                    "title": "🔍 Check Official Website",
+                    "description": f"Visit {university}'s admissions page for accurate requirements."
+                },
+                {
+                    "type": "ai_advice",
+                    "title": "📧 Contact Admissions Office",
+                    "description": "Reach out to the admissions office directly for clarification."
+                },
+                {
+                    "type": "app_feature",
+                    "title": "📚 Create Your Study Plan",
+                    "description": "Get a personalized study plan while you research.",
+                    "feature": "study_plan"
+                }
+            ]
+        }
 
+    def _parse_json(self, text: str) -> dict:
+        """Helper to parse JSON from AI response"""
+        try:
+            # Try to find JSON in the text
+            import re
+            json_match = re.search(r'\{.*\}', text, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group())
+            return {}
+        except Exception as e:
+            print(f"❌ JSON parse error: {e}")
+            return {}
 
 # ============================================================
 # INSTANCE
