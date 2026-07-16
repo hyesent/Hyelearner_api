@@ -1,6 +1,7 @@
 import google.generativeai as genai
 from groq import Groq
 import json
+import re
 from typing import List, Dict, Any, Optional
 from config import settings
 
@@ -9,30 +10,34 @@ class AIService:
         self.gemini = None
         self.groq = None
         
+        # Initialize Gemini 2.5 Flash
         if settings.GEMINI_API_KEY:
             try:
                 genai.configure(api_key=settings.GEMINI_API_KEY)
                 self.gemini = genai.GenerativeModel('gemini-2.5-flash')
-                print("✅ Gemini AI initialized successfully")
+                print("✅ Gemini 2.5 Flash initialized successfully")
             except Exception as e:
                 print(f"❌ Gemini initialization failed: {e}")
         else:
             print("⚠️ GEMINI_API_KEY not found in environment")
         
+        # Initialize Groq with valid model
         if settings.GROQ_API_KEY:
             try:
                 self.groq = Groq(api_key=settings.GROQ_API_KEY)
-                print("✅ Groq AI initialized successfully")
+                # ✅ FIXED: Using valid, supported model
+                self.groq_model = "llama3-70b-8192"
+                print(f"✅ Groq AI initialized successfully (model: {self.groq_model})")
             except Exception as e:
                 print(f"❌ Groq initialization failed: {e}")
         else:
             print("⚠️ GROQ_API_KEY not found in environment")
 
     # ============================================================
-    # 1. AI EXPLANATION
+    # 1. AI EXPLANATION — GROQ PRIMARY, GEMINI FALLBACK
     # ============================================================
     async def get_explanation(self, question: Dict, user_answer: str) -> Dict:
-        """Generate detailed explanation using Gemini"""
+        """Generate detailed explanation using Groq (primary), Gemini (fallback)"""
         print(f"📥 Received question: {question.get('question_text', 'N/A')[:50]}...")
         print(f"📥 User answer: {user_answer}")
 
@@ -64,14 +69,32 @@ class AIService:
         [A quick way to remember this concept]
         """
 
+        # ✅ TRY GROQ FIRST (PRIMARY)
+        if self.groq:
+            try:
+                response = self.groq.chat.completions.create(
+                    model=self.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=600,
+                    temperature=0.7
+                )
+                raw_text = response.choices[0].message.content
+                print("✅ Groq explanation generated")
+                return self._parse_explanation(raw_text)
+            except Exception as e:
+                print(f"❌ Groq error: {e}")
+                # Fall through to Gemini
+
+        # ✅ FALLBACK TO GEMINI
         if self.gemini:
             try:
                 response = self.gemini.generate_content(prompt)
+                print("✅ Gemini explanation generated (fallback)")
                 return self._parse_explanation(response.text)
             except Exception as e:
                 print(f"❌ Gemini error: {e}")
-                return self._fallback_explanation(question, user_answer)
 
+        # ❌ Both failed
         return self._fallback_explanation(question, user_answer)
 
     def _parse_explanation(self, text: str) -> Dict:
@@ -124,10 +147,10 @@ class AIService:
         }
 
     # ============================================================
-    # 2. AI WEAKNESS ANALYSIS
+    # 2. AI WEAKNESS ANALYSIS — GROQ PRIMARY, GEMINI FALLBACK
     # ============================================================
     async def get_weakness_analysis(self, mistakes: List[Dict], mastery: Dict) -> List[Dict]:
-        """Analyze weak areas using Gemini"""
+        """Analyze weak areas using Groq (primary), Gemini (fallback)"""
         if not mistakes:
             return []
 
@@ -157,19 +180,35 @@ class AIService:
         ]
         """
 
+        # ✅ TRY GROQ FIRST (PRIMARY)
+        if self.groq:
+            try:
+                response = self.groq.chat.completions.create(
+                    model=self.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=400,
+                    temperature=0.5
+                )
+                raw_text = response.choices[0].message.content
+                print("✅ Groq weakness analysis generated")
+                return self._parse_weakness(raw_text)
+            except Exception as e:
+                print(f"❌ Groq weakness error: {e}")
+
+        # ✅ FALLBACK TO GEMINI
         if self.gemini:
             try:
                 response = self.gemini.generate_content(prompt)
+                print("✅ Gemini weakness analysis generated (fallback)")
                 return self._parse_weakness(response.text)
             except Exception as e:
                 print(f"❌ Gemini weakness error: {e}")
-                return self._fallback_weakness(mistakes)
 
+        # ❌ Both failed
         return self._fallback_weakness(mistakes)
 
     def _parse_weakness(self, text: str) -> List[Dict]:
         try:
-            import re
             json_match = re.search(r'\[.*\]', text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
@@ -222,7 +261,7 @@ class AIService:
         return list(topics.values())[:5]
 
     # ============================================================
-    # 3. AI STUDY PLAN (Legacy v1)
+    # 3. AI STUDY PLAN (Legacy v1) — GEMINI PRIMARY, GROQ FALLBACK
     # ============================================================
     async def generate_study_plan(
         self,
@@ -234,14 +273,10 @@ class AIService:
         target_score: str = None,
         study_style: str = None
     ) -> Dict:
-        """Generate personalized study plan using Gemini (v1)"""
+        """Generate personalized study plan using Gemini (primary), Groq (fallback)"""
         print(f"📥 Goal: {goal}")
         print(f"📥 Subjects: {subjects}")
         print(f"📥 Hours/week: {hours_per_week}")
-        print(f"📥 Weak topics: {weak_topics}")
-        print(f"📥 Days until exam: {days_until_exam}")
-        print(f"📥 Target score: {target_score}")
-        print(f"📥 Study style: {study_style}")
 
         days_text = f"Days until exam: {days_until_exam}" if days_until_exam else "No specific exam date"
         weak_text = f"Weak topics to focus on: {', '.join(weak_topics) if weak_topics else 'None specified'}"
@@ -286,13 +321,29 @@ class AIService:
         - Tip 3
         """
 
+        # ✅ TRY GEMINI FIRST (PRIMARY)
         if self.gemini:
             try:
                 response = self.gemini.generate_content(prompt)
+                print("✅ Gemini study plan generated")
                 return self._parse_study_plan(response.text)
             except Exception as e:
                 print(f"❌ Gemini study plan error: {e}")
-                return self._fallback_study_plan(subjects, hours_per_week, target_score, study_style)
+
+        # ✅ FALLBACK TO GROQ
+        if self.groq:
+            try:
+                response = self.groq.chat.completions.create(
+                    model=self.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=800,
+                    temperature=0.7
+                )
+                raw_text = response.choices[0].message.content
+                print("✅ Groq study plan generated (fallback)")
+                return self._parse_study_plan(raw_text)
+            except Exception as e:
+                print(f"❌ Groq study plan error: {e}")
 
         return self._fallback_study_plan(subjects, hours_per_week, target_score, study_style)
 
@@ -351,13 +402,10 @@ class AIService:
         }
 
     # ============================================================
-    # 4. AI STUDY PLAN V2 (Premium)
+    # 4. AI STUDY PLAN V2 (Premium) — GEMINI PRIMARY, GROQ FALLBACK
     # ============================================================
     async def enhance_study_plan(self, plan: Dict, user_data: Dict, weak_topics: List[str]) -> Dict:
         """Use AI to enhance the study plan with additional insights"""
-        if not self.gemini:
-            return self._fallback_enhancement()
-
         prompt = f"""
         You are an expert study coach. Review this study plan and provide personalized insights.
 
@@ -390,22 +438,39 @@ class AIService:
         }}
         """
 
-        try:
-            response = self.gemini.generate_content(prompt)
-            return self._parse_enhancement(response.text)
-        except Exception as e:
-            print(f"❌ Gemini enhancement error: {e}")
-            return self._fallback_enhancement()
+        # ✅ TRY GEMINI FIRST (PRIMARY)
+        if self.gemini:
+            try:
+                response = self.gemini.generate_content(prompt)
+                print("✅ Gemini enhancement generated")
+                return self._parse_enhancement(response.text)
+            except Exception as e:
+                print(f"❌ Gemini enhancement error: {e}")
+
+        # ✅ FALLBACK TO GROQ
+        if self.groq:
+            try:
+                response = self.groq.chat.completions.create(
+                    model=self.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=500,
+                    temperature=0.7
+                )
+                raw_text = response.choices[0].message.content
+                print("✅ Groq enhancement generated (fallback)")
+                return self._parse_enhancement(raw_text)
+            except Exception as e:
+                print(f"❌ Groq enhancement error: {e}")
+
+        return self._fallback_enhancement()
 
     def _parse_enhancement(self, text: str) -> Dict:
         try:
-            import re
             json_match = re.search(r'\{.*\}', text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
         except:
             pass
-
         return self._fallback_enhancement()
 
     def _fallback_enhancement(self) -> Dict:
@@ -421,10 +486,10 @@ class AIService:
         }
 
     # ============================================================
-    # 5. AI QUESTION GENERATOR
+    # 5. AI QUESTION GENERATOR — GEMINI PRIMARY (NO GROQ FALLBACK)
     # ============================================================
     async def generate_questions(self, topic: str, count: int, difficulty: Optional[str] = None) -> List[Dict]:
-        """Generate AI-powered practice questions"""
+        """Generate AI-powered practice questions using Gemini"""
         prompt = f"""
         Generate {count} {difficulty or 'mixed'} difficulty practice questions on the topic: {topic}.
 
@@ -444,7 +509,6 @@ class AIService:
         if self.gemini:
             try:
                 response = self.gemini.generate_content(prompt)
-                import re
                 json_match = re.search(r'\[.*\]', response.text, re.DOTALL)
                 if json_match:
                     return json.loads(json_match.group())
@@ -454,7 +518,7 @@ class AIService:
         return []
 
     # ============================================================
-    # 6. CHECK ADMISSION ELIGIBILITY (Global Course Finder)
+    # 6. COURSE FINDER — GEMINI PRIMARY, GROQ FALLBACK
     # ============================================================
     async def course_finder_check(
         self,
@@ -525,24 +589,25 @@ class AIService:
         }}
         """
 
-        # Try Gemini first
+        # ✅ TRY GEMINI FIRST (PRIMARY)
         if self.gemini:
             try:
                 response = self.gemini.generate_content(prompt)
                 result = self._parse_json(response.text)
-                # Ensure similar_courses exists
                 if "similar_courses" not in result:
                     result["similar_courses"] = []
                 return result
             except Exception as e:
                 print(f"❌ Gemini failed: {e}")
 
-        # Fallback to Groq
+        # ✅ FALLBACK TO GROQ
         if self.groq:
             try:
                 response = self.groq.chat.completions.create(
-                    model="mixtral-8x7b-32768",
-                    messages=[{"role": "user", "content": prompt}]
+                    model=self.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=600,
+                    temperature=0.7
                 )
                 result = self._parse_json(response.choices[0].message.content)
                 if "similar_courses" not in result:
@@ -551,7 +616,7 @@ class AIService:
             except Exception as e:
                 print(f"❌ Groq failed: {e}")
 
-        # Fallback response
+        # ❌ Both failed
         return {
             "status": "unknown",
             "requirements": {
@@ -588,8 +653,6 @@ class AIService:
     def _parse_json(self, text: str) -> dict:
         """Helper to parse JSON from AI response"""
         try:
-            # Try to find JSON in the text
-            import re
             json_match = re.search(r'\{.*\}', text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
