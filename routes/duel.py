@@ -23,6 +23,32 @@ def get_active_users(db: Session, minutes: int = 5):
     return active_users
 
 
+def update_streak(stats: UserStats, db: Session):
+    """Update user streak based on activity"""
+    today = datetime.utcnow().date()
+    
+    if stats.last_activity:
+        last_date = stats.last_activity.date()
+        if last_date == today:
+            # Already active today, no change
+            pass
+        elif last_date == today - timedelta(days=1):
+            # Consecutive day
+            stats.current_streak = (stats.current_streak or 0) + 1
+            if stats.current_streak > (stats.longest_streak or 0):
+                stats.longest_streak = stats.current_streak
+        else:
+            # Streak broken
+            stats.current_streak = 1
+    else:
+        # First activity
+        stats.current_streak = 1
+        stats.longest_streak = 1
+    
+    stats.last_activity = datetime.utcnow()
+    db.commit()
+
+
 @router.post("/create")
 async def create_duel(
     data: DuelCreate,
@@ -35,7 +61,7 @@ async def create_duel(
     - Private: Only accessible via code
     """
     
-    # ✅ Use questions from frontend
+    # Use questions from frontend
     if not data.questions or len(data.questions) == 0:
         raise HTTPException(
             status_code=400,
@@ -59,7 +85,7 @@ async def create_duel(
     active_users = get_active_users(db)
     active_count = len(active_users)
     
-    # ✅ Create duel with questions from frontend
+    # Create duel with questions from frontend
     duel = Duel(
         challenger_id=current_user.id,
         opponent_id=None,
@@ -68,7 +94,7 @@ async def create_duel(
         topic=data.topic,
         question_ids=question_ids,
         questions_data=selected_questions,  # Store full questions
-        status="waiting",  # ✅ KEEP 'waiting' (you added it to enum)
+        status="waiting",
         is_public=data.is_public,
         time_limit=data.time_limit,
         challenger_score=0,
@@ -111,7 +137,7 @@ async def get_public_duels(
     """Get all public duels waiting for opponents."""
     duels = db.query(Duel).filter(
         Duel.is_public == True,
-        Duel.status == "waiting",  # ✅ KEEP 'waiting'
+        Duel.status == "waiting",
         Duel.challenger_id != current_user.id
     ).order_by(Duel.created_at.desc()).all()
     
@@ -192,7 +218,7 @@ async def join_duel(
     duel.status = "active"
     db.commit()
     
-    # ✅ Get questions from duel
+    # Get questions from duel
     questions_data = duel.questions_data or []
     
     return {
@@ -218,7 +244,7 @@ async def join_public_duel(
     duel = db.query(Duel).filter(
         Duel.id == duel_id,
         Duel.is_public == True,
-        Duel.status == "waiting"  # ✅ KEEP 'waiting'
+        Duel.status == "waiting"
     ).first()
     
     if not duel:
@@ -251,7 +277,7 @@ async def submit_duel(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Submit answers for a duel"""
+    """Submit answers for a duel with PROPER XP awarding"""
     duel = db.query(Duel).filter(Duel.id == data.duel_id).first()
     if not duel:
         raise HTTPException(status_code=404, detail="Duel not found")
@@ -265,7 +291,7 @@ async def submit_duel(
     if not is_challenger and not is_opponent:
         raise HTTPException(status_code=403, detail="You are not part of this duel")
     
-    # ✅ Use questions from duel
+    # Get questions from duel
     questions = duel.questions_data or []
     question_map = {q.get('id'): q for q in questions}
     
@@ -276,6 +302,7 @@ async def submit_duel(
         if user_answer and user_answer == q.get('answer'):
             correct += 1
     
+    # Store answers and score
     if is_challenger:
         duel.challenger_answers = data.answers
         duel.challenger_score = correct
@@ -285,26 +312,100 @@ async def submit_duel(
     
     db.commit()
     
+    # Check if both players have submitted
     if duel.challenger_answers and duel.opponent_answers:
         duel.status = "completed"
         duel.completed_at = datetime.utcnow()
         
+        # Determine winner
         if duel.challenger_score > duel.opponent_score:
             duel.winner_id = duel.challenger_id
         elif duel.opponent_score > duel.challenger_score:
             duel.winner_id = duel.opponent_id
         else:
-            duel.winner_id = None
-        
-        if duel.winner_id:
-            winner_stats = db.query(UserStats).filter(UserStats.user_id == duel.winner_id).first()
-            if winner_stats:
-                winner_stats.xp += 50
-                winner_stats.level = min(winner_stats.xp // 100 + 1, 20)
+            duel.winner_id = None  # Draw
         
         db.commit()
         
-        winner_name = db.query(User).filter(User.id == duel.winner_id).first().username if duel.winner_id else "Draw"
+        # ============================================
+        # AWARD XP TO BOTH PLAYERS
+        # ============================================
+        
+        # Get both players' stats
+        challenger_stats = db.query(UserStats).filter(UserStats.user_id == duel.challenger_id).first()
+        opponent_stats = db.query(UserStats).filter(UserStats.user_id == duel.opponent_id).first()
+        
+        # Get both players' profiles
+        challenger = db.query(User).filter(User.id == duel.challenger_id).first()
+        opponent = db.query(User).filter(User.id == duel.opponent_id).first()
+        
+        # Award XP based on result
+        if duel.winner_id:
+            # Winner gets 50 XP
+            if challenger_stats and duel.winner_id == duel.challenger_id:
+                challenger_stats.xp += 50
+                challenger_stats.level = challenger_stats.xp // 100 + 1
+                challenger_stats.duel_wins = (challenger_stats.duel_wins or 0) + 1
+                # Update streak
+                update_streak(challenger_stats, db)
+                print(f"✅ {challenger.username} +50 XP (Winner)")
+                
+                # Loser gets 15 XP (participation)
+                if opponent_stats:
+                    opponent_stats.xp += 15
+                    opponent_stats.level = opponent_stats.xp // 100 + 1
+                    opponent_stats.duel_losses = (opponent_stats.duel_losses or 0) + 1
+                    # Update streak
+                    update_streak(opponent_stats, db)
+                    print(f"✅ {opponent.username} +15 XP (Participation)")
+            
+            elif opponent_stats and duel.winner_id == duel.opponent_id:
+                opponent_stats.xp += 50
+                opponent_stats.level = opponent_stats.xp // 100 + 1
+                opponent_stats.duel_wins = (opponent_stats.duel_wins or 0) + 1
+                # Update streak
+                update_streak(opponent_stats, db)
+                print(f"✅ {opponent.username} +50 XP (Winner)")
+                
+                # Loser gets 15 XP (participation)
+                if challenger_stats:
+                    challenger_stats.xp += 15
+                    challenger_stats.level = challenger_stats.xp // 100 + 1
+                    challenger_stats.duel_losses = (challenger_stats.duel_losses or 0) + 1
+                    # Update streak
+                    update_streak(challenger_stats, db)
+                    print(f"✅ {challenger.username} +15 XP (Participation)")
+        else:
+            # Draw - both get 25 XP
+            if challenger_stats:
+                challenger_stats.xp += 25
+                challenger_stats.level = challenger_stats.xp // 100 + 1
+                challenger_stats.duel_draws = (challenger_stats.duel_draws or 0) + 1
+                # Update streak
+                update_streak(challenger_stats, db)
+                print(f"✅ {challenger.username} +25 XP (Draw)")
+            
+            if opponent_stats:
+                opponent_stats.xp += 25
+                opponent_stats.level = opponent_stats.xp // 100 + 1
+                opponent_stats.duel_draws = (opponent_stats.duel_draws or 0) + 1
+                # Update streak
+                update_streak(opponent_stats, db)
+                print(f"✅ {opponent.username} +25 XP (Draw)")
+        
+        # Update last_login for both players
+        if challenger:
+            challenger.last_login = datetime.utcnow()
+        if opponent:
+            opponent.last_login = datetime.utcnow()
+        
+        db.commit()
+        
+        # Get updated stats for response
+        updated_challenger = db.query(UserStats).filter(UserStats.user_id == duel.challenger_id).first()
+        updated_opponent = db.query(UserStats).filter(UserStats.user_id == duel.opponent_id).first()
+        
+        winner_name = challenger.username if duel.winner_id == duel.challenger_id else opponent.username if duel.winner_id else "Draw"
         
         return {
             "duel_id": duel.id,
@@ -314,9 +415,23 @@ async def submit_duel(
             "challenger_score": duel.challenger_score,
             "opponent_score": duel.opponent_score,
             "winner": winner_name,
-            "completed_at": duel.completed_at
+            "completed_at": duel.completed_at,
+            # Include XP earned
+            "xp_awarded": {
+                "challenger": {
+                    "xp": updated_challenger.xp if updated_challenger else 0,
+                    "level": updated_challenger.level if updated_challenger else 1,
+                    "streak": updated_challenger.current_streak if updated_challenger else 0
+                },
+                "opponent": {
+                    "xp": updated_opponent.xp if updated_opponent else 0,
+                    "level": updated_opponent.level if updated_opponent else 1,
+                    "streak": updated_opponent.current_streak if updated_opponent else 0
+                }
+            }
         }
     
+    # If only one player has submitted
     return {
         "duel_id": duel.id,
         "submitted": True,
@@ -324,7 +439,8 @@ async def submit_duel(
         "status": duel.status,
         "challenger_score": duel.challenger_score if duel.challenger_answers else None,
         "opponent_score": duel.opponent_score if duel.opponent_answers else None,
-        "winner": None
+        "winner": None,
+        "waiting_for_opponent": True
     }
 
 
@@ -345,6 +461,10 @@ async def get_duel_history(
         challenger = db.query(User).filter(User.id == duel.challenger_id).first()
         opponent = db.query(User).filter(User.id == duel.opponent_id).first()
         
+        # Determine if current user won
+        is_winner = duel.winner_id == current_user.id
+        is_draw = duel.winner_id is None
+        
         history.append({
             "id": duel.id,
             "code": duel.code,
@@ -353,6 +473,7 @@ async def get_duel_history(
             "challenger_score": duel.challenger_score,
             "opponent_score": duel.opponent_score,
             "winner": challenger.username if duel.winner_id == duel.challenger_id else opponent.username if duel.winner_id else "Draw",
+            "result": "Win" if is_winner else "Loss" if not is_draw else "Draw",
             "subject": duel.subject,
             "is_public": duel.is_public,
             "completed_at": duel.completed_at
@@ -416,4 +537,44 @@ async def get_duel_by_code(
         "questions_count": len(duel.question_ids),
         "time_limit": duel.time_limit,
         "created_at": duel.created_at
+    }
+
+
+@router.get("/stats")
+async def get_duel_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get current user's duel statistics"""
+    stats = db.query(UserStats).filter(UserStats.user_id == current_user.id).first()
+    
+    # Count duels
+    total_duels = db.query(Duel).filter(
+        (Duel.challenger_id == current_user.id) | (Duel.opponent_id == current_user.id),
+        Duel.status == "completed"
+    ).count()
+    
+    wins = db.query(Duel).filter(
+        Duel.winner_id == current_user.id,
+        Duel.status == "completed"
+    ).count()
+    
+    draws = db.query(Duel).filter(
+        (Duel.challenger_id == current_user.id) | (Duel.opponent_id == current_user.id),
+        Duel.winner_id.is_(None),
+        Duel.status == "completed"
+    ).count()
+    
+    losses = total_duels - wins - draws
+    
+    return {
+        "total_duels": total_duels,
+        "wins": wins,
+        "losses": losses,
+        "draws": draws,
+        "win_rate": round((wins / total_duels * 100) if total_duels > 0 else 0, 1),
+        "xp": stats.xp if stats else 0,
+        "level": stats.level if stats else 1,
+        "streak": stats.current_streak if stats else 0,
+        "longest_streak": stats.longest_streak if stats else 0
     }
