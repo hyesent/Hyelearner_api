@@ -12,7 +12,7 @@ class AIService:
         if settings.GEMINI_API_KEY:
             try:
                 genai.configure(api_key=settings.GEMINI_API_KEY)
-                self.gemini = genai.GenerativeModel('gemini-2.0-flash-exp')
+                self.gemini = genai.GenerativeModel('gemini-2.5-flash')
                 print("✅ Gemini AI initialized successfully")
             except Exception as e:
                 print(f"❌ Gemini initialization failed: {e}")
