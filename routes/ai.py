@@ -1,15 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime
+from pydantic import BaseModel
 
 from database import get_db
 from models import User, Question, Mistake, TopicMastery, UserStats, UserSettings
-from schemas import (
-    AIExplanationRequest, AIExplanationResponse,
-    AIWeaknessRequest, AIWeaknessResponse,
-    AIWeaknessItem, AIStudyPlanRequest, AIStudyPlanResponse
-)
 from dependencies import get_current_user
 from services.ai import ai_service
 from services.study_plan import StudyPlanGenerator
@@ -18,103 +14,222 @@ from services.syllabus import get_cached_syllabus, get_subject_syllabus
 router = APIRouter()
 
 
-@router.post("/explain", response_model=AIExplanationResponse)
-async def get_explanation(
+# ============================================================
+# UPDATED SCHEMAS — Match frontend requests
+# ============================================================
+
+class AIExplanationRequest(BaseModel):
+    question: str
+    userAnswer: str
+    options: Optional[List[str]] = None
+    correctAnswer: Optional[str] = None
+
+
+class AIWeaknessRequest(BaseModel):
+    mistakes: List[Dict] = []
+    mastery: Optional[Dict] = None
+    limit: int = 5
+    subject: Optional[str] = None  # For backward compatibility
+
+
+class AIStudyPlanRequest(BaseModel):
+    goal: str
+    subjects: List[str]
+    hours_per_week: int
+    weak_topics: Optional[List[str]] = None
+    days_until_exam: Optional[int] = None
+    target_score: Optional[str] = None
+    study_style: Optional[str] = None
+    exam_type: Optional[str] = "jamb"
+
+
+class AIStudyPlanV2Request(BaseModel):
+    plan: Dict
+    user_data: Dict
+    weak_topics: List[str]
+
+
+class GenerateQuestionsRequest(BaseModel):
+    topic: str
+    count: int = 5
+    difficulty: Optional[str] = None
+
+
+class CourseFinderRequest(BaseModel):
+    university: str
+    country: str
+    course: str
+    score: float
+    score_type: str
+    subjects: List[str]
+
+
+# ============================================================
+# 1. AI EXPLANATION — Supports frontend data (NO DB lookup)
+# ============================================================
+
+@router.post("/explain")
+async def get_ai_explanation(
     request: AIExplanationRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get AI explanation for a question"""
-    question = db.query(Question).filter(Question.id == request.question_id).first()
-    if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
-
-    explanation = await ai_service.get_explanation(
-        {
-            "question_text": question.question,
-            "options": question.options,
-            "correct_answer": question.answer,
-            "explanation": question.explanation,
-            "topic": question.topic,
-            "subject": question.subject,
-            "difficulty": question.difficulty
-        },
-        request.user_answer
+    """
+    Get AI explanation for a question.
+    Questions come from FRONTEND (no database lookup).
+    Groq primary, Gemini fallback.
+    """
+    
+    # Build question dict from frontend data
+    question_data = {
+        "question_text": request.question,
+        "options": request.options or [],
+        "correct_answer": request.correctAnswer or "Unknown"
+    }
+    
+    # Get explanation from AI service (Groq → Gemini fallback)
+    result = await ai_service.get_explanation(
+        question=question_data,
+        user_answer=request.userAnswer
     )
+    
+    # Add context to response
+    result["question"] = request.question
+    result["user_answer"] = request.userAnswer
+    if request.correctAnswer:
+        result["correct_answer"] = request.correctAnswer
+    
+    return result
 
-    return explanation
 
+# ============================================================
+# 2. AI WEAKNESS ANALYSIS — Accepts mistakes + mastery from frontend
+# ============================================================
 
-@router.post("/weakness", response_model=AIWeaknessResponse)
+@router.post("/weakness")
 async def get_weakness_analysis(
     request: AIWeaknessRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get AI weakness analysis"""
-    query = db.query(Mistake).filter(
-        Mistake.user_id == current_user.id,
-        Mistake.is_resolved == False
+    """
+    AI weakness analysis using Groq (primary) or Gemini (fallback).
+    Expects mistakes and optional mastery data from frontend.
+    """
+    
+    # ✅ Use data from frontend if provided
+    mistakes_data = request.mistakes
+    mastery_data = request.mastery or {}
+    
+    # If no mistakes provided, try to get from database (backward compatibility)
+    if not mistakes_data:
+        query = db.query(Mistake).filter(
+            Mistake.user_id == current_user.id,
+            Mistake.is_resolved == False
+        )
+        if request.subject:
+            query = query.filter(Mistake.subject.ilike(request.subject))
+        
+        db_mistakes = query.limit(100).all()
+        
+        if not db_mistakes:
+            return {
+                "weakTopics": [],
+                "summary": "No mistakes found! Keep up the great work! 🎉",
+                "createdAt": datetime.utcnow().isoformat(),
+                "totalMistakes": 0,
+                "topicsAnalyzed": 0
+            }
+        
+        # Convert DB mistakes to dict format
+        mistakes_data = [
+            {
+                "topic": m.topic,
+                "subject": m.subject,
+                "user_answer": m.user_answer,
+                "correct_answer": m.correct_answer,
+                "question_id": m.question_id
+            }
+            for m in db_mistakes
+        ]
+        
+        # Get mastery from DB if not provided
+        if not mastery_data:
+            mastery_query = db.query(TopicMastery).filter(
+                TopicMastery.user_id == current_user.id
+            )
+            if request.subject:
+                mastery_query = mastery_query.filter(TopicMastery.subject.ilike(request.subject))
+            
+            db_mastery = mastery_query.all()
+            mastery_data = {
+                m.topic: {
+                    "correct": m.correct,
+                    "total": m.total,
+                    "accuracy": (m.correct / m.total * 100) if m.total > 0 else 0
+                }
+                for m in db_mastery
+            }
+    
+    # Get analysis from AI service (Groq → Gemini fallback)
+    result = await ai_service.get_weakness_analysis(
+        mistakes=mistakes_data,
+        mastery=mastery_data
     )
-
-    if request.subject:
-        query = query.filter(Mistake.subject.ilike(request.subject))
-
-    mistakes = query.limit(100).all()
-
-    if not mistakes:
-        return {
-            "weak_topics": [],
-            "summary": "No mistakes found! Keep up the great work! 🎉",
-            "created_at": datetime.utcnow().isoformat()
-        }
-
-    mastery_query = db.query(TopicMastery).filter(TopicMastery.user_id == current_user.id)
-    if request.subject:
-        mastery_query = mastery_query.filter(TopicMastery.subject.ilike(request.subject))
-
-    mastery_data = mastery_query.all()
-
-    mistake_data = [
-        {
-            "topic": m.topic,
-            "subject": m.subject,
-            "user_answer": m.user_answer,
-            "correct_answer": m.correct_answer,
-            "question_id": m.question_id
-        }
-        for m in mistakes
-    ]
-
-    mastery_dict = {
-        m.topic: {
-            "correct": m.correct,
-            "total": m.total,
-            "accuracy": (m.correct / m.total * 100) if m.total > 0 else 0
-        }
-        for m in mastery_data
-    }
-
-    weak_topics = await ai_service.get_weakness_analysis(mistake_data, mastery_dict)
-
-    if request.limit and len(weak_topics) > request.limit:
-        weak_topics = weak_topics[:request.limit]
-
-    if weak_topics:
-        high_priority = [t for t in weak_topics if t.get('priority') == 'High']
-        summary = f"Found {len(weak_topics)} areas to improve. Focus on {len(high_priority)} high-priority topics first."
-    else:
-        summary = "Great job! No major weaknesses detected. Keep practicing to maintain your skills."
-
+    
+    # Limit results
+    if request.limit and len(result) > request.limit:
+        result = result[:request.limit]
+    
+    # Generate summary
+    high_priority = [t for t in result if t.get('priority') == 'High']
+    summary = f"Found {len(result)} areas to improve. Focus on {len(high_priority)} high-priority topics first."
+    
     return {
-        "weak_topics": weak_topics,
+        "weakTopics": result,
         "summary": summary,
-        "created_at": datetime.utcnow().isoformat()
+        "createdAt": datetime.utcnow().isoformat(),
+        "totalMistakes": len(mistakes_data),
+        "topicsAnalyzed": len(result)
     }
 
 
 # ============================================================
-# PREMIUM STUDY PLAN V2 — Uses dynamic syllabus + AI
+# 3. AI STUDY PLAN (Legacy v1) — Gemini primary, Groq fallback
+# ============================================================
+
+@router.post("/study-plan")
+async def generate_study_plan_v1(
+    request: AIStudyPlanRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Legacy study plan endpoint (v1). Gemini primary, Groq fallback."""
+    
+    # Get weak topics from mistakes if not provided
+    weak_topics = request.weak_topics or []
+    if not weak_topics:
+        mistakes = db.query(Mistake).filter(
+            Mistake.user_id == current_user.id,
+            Mistake.is_resolved == False
+        ).limit(50).all()
+        weak_topics = list(set([m.topic for m in mistakes if m.topic]))
+
+    result = await ai_service.generate_study_plan(
+        goal=request.goal,
+        subjects=request.subjects,
+        hours_per_week=request.hours_per_week,
+        weak_topics=weak_topics,
+        days_until_exam=request.days_until_exam,
+        target_score=request.target_score,
+        study_style=request.study_style
+    )
+
+    return {"plan": result}
+
+
+# ============================================================
+# 4. AI STUDY PLAN V2 (Premium) — Gemini primary, Groq fallback
 # ============================================================
 
 @router.post("/study-plan-v2")
@@ -126,21 +241,22 @@ async def generate_study_plan_v2(
     """
     PREMIUM FEATURE: Generate an advanced AI-powered study plan.
     Uses dynamic syllabus + user performance data + AI insights.
-    Supports 50+ subjects with 300+ topics.
+    Gemini primary, Groq fallback.
     """
+    
     # 1. Get user's weak topics from mistakes
     mistakes = db.query(Mistake).filter(
         Mistake.user_id == current_user.id,
         Mistake.is_resolved == False
     ).limit(100).all()
-
-    weak_topics = list(set([m.topic for m in mistakes]))
+    
+    weak_topics = list(set([m.topic for m in mistakes if m.topic]))
 
     # 2. Get topic mastery data
     mastery_data = db.query(TopicMastery).filter(
         TopicMastery.user_id == current_user.id
     ).all()
-
+    
     mastery_dict = {
         m.topic: (m.correct / m.total) if m.total > 0 else 0.5
         for m in mastery_data
@@ -149,9 +265,8 @@ async def generate_study_plan_v2(
     # 3. Get user's stats
     stats = db.query(UserStats).filter(UserStats.user_id == current_user.id).first()
 
-    # 4. Build user data for study plan generator
-    # ✅ FIXED: Allow request to override exam type
-    exam_type = request.exam_type or current_user.exam or "jamb"
+    # 4. Build user data
+    exam_type = request.exam_type or "jamb"
     
     user_data = {
         "subjects": request.subjects,
@@ -172,7 +287,7 @@ async def generate_study_plan_v2(
 
     plan = generator.generate_plan()
 
-    # 6. Get AI enhancement
+    # 6. Get AI enhancement (Gemini → Groq fallback)
     ai_insights = await ai_service.enhance_study_plan(
         plan=plan,
         user_data=user_data,
@@ -200,7 +315,33 @@ async def generate_study_plan_v2(
 
 
 # ============================================================
-# GET SYLLABUS DATA
+# 5. AI QUESTION GENERATOR — Gemini primary (no Groq fallback)
+# ============================================================
+
+@router.post("/generate-questions")
+async def generate_questions(
+    request: GenerateQuestionsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate AI-powered practice questions using Gemini."""
+    
+    questions = await ai_service.generate_questions(
+        topic=request.topic,
+        count=request.count,
+        difficulty=request.difficulty
+    )
+
+    return {
+        "topic": request.topic,
+        "count": len(questions),
+        "difficulty": request.difficulty or "mixed",
+        "questions": questions
+    }
+
+
+# ============================================================
+# 6. SYLLABUS — Not AI, but useful for study plan
 # ============================================================
 
 @router.get("/syllabus")
@@ -210,10 +351,7 @@ async def get_syllabus_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Get syllabus data for a specific exam.
-    Returns all topics with weights and priorities.
-    """
+    """Get syllabus data for a specific exam."""
     syllabus = get_cached_syllabus(exam_type)
 
     if subject:
@@ -233,20 +371,20 @@ async def get_syllabus_data(
 
 
 # ============================================================
-# GET STUDY PLAN PRESETS
+# 7. STUDY PLAN PRESETS
 # ============================================================
 
 @router.get("/study-plan-presets")
 async def get_study_plan_presets(
     current_user: User = Depends(get_current_user)
 ):
-    """Get preset study plans for different scenarios"""
+    """Get preset study plan configurations."""
     from services.study_plan import get_preset_plans
     return get_preset_plans()
 
 
 # ============================================================
-# AI USAGE
+# 8. AI USAGE STATS
 # ============================================================
 
 @router.get("/usage")
@@ -254,7 +392,7 @@ async def get_ai_usage(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get user's AI usage statistics"""
+    """Get user's AI usage statistics."""
     settings = db.query(UserSettings).filter(
         UserSettings.user_id == current_user.id
     ).first()
@@ -280,58 +418,77 @@ async def get_ai_usage(
 
 
 # ============================================================
-# AI QUESTION GENERATOR (Future Feature)
+# 9. COURSE FINDER — Gemini primary, Groq fallback
 # ============================================================
 
-@router.post("/generate")
-async def generate_questions(
-    topic: str,
-    count: int = Query(10, ge=1, le=20),
-    difficulty: Optional[str] = None,
+@router.post("/course-finder")
+async def course_finder_check(
+    request: CourseFinderRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Generate AI-powered practice questions (Future feature)"""
-    questions = await ai_service.generate_questions(
-        topic=topic,
-        count=count,
-        difficulty=difficulty
+    """
+    Global course finder — check admission eligibility for ANY university.
+    Gemini primary, Groq fallback.
+    """
+    
+    result = await ai_service.course_finder_check(
+        university=request.university,
+        country=request.country,
+        course=request.course,
+        score=request.score,
+        score_type=request.score_type,
+        subjects=request.subjects
     )
+    
+    return result
 
+
+# ============================================================
+# 10. AI TEST ENDPOINT (Health Check)
+# ============================================================
+
+@router.get("/test")
+async def test_ai(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Test AI connectivity — checks Gemini and Groq status.
+    """
+    
+    gemini_status = "❌ Not initialized"
+    groq_status = "❌ Not initialized"
+    
+    if ai_service.gemini:
+        try:
+            test_response = ai_service.gemini.generate_content("Say 'Hello' in one word.")
+            if test_response and test_response.text:
+                gemini_status = "✅ Working"
+            else:
+                gemini_status = "⚠️ Responded but no content"
+        except Exception as e:
+            gemini_status = f"❌ Error: {str(e)[:50]}..."
+    
+    if ai_service.groq:
+        try:
+            test_response = ai_service.groq.chat.completions.create(
+                model=ai_service.groq_model,
+                messages=[{"role": "user", "content": "Say 'Hello' in one word."}],
+                max_tokens=10
+            )
+            if test_response and test_response.choices:
+                groq_status = "✅ Working"
+            else:
+                groq_status = "⚠️ Responded but no content"
+        except Exception as e:
+            groq_status = f"❌ Error: {str(e)[:50]}..."
+    
     return {
-        "topic": topic,
-        "count": len(questions),
-        "difficulty": difficulty or "mixed",
-        "questions": questions
+        "gemini": gemini_status,
+        "groq": groq_status,
+        "gemini_api_key_set": bool(settings.GEMINI_API_KEY),
+        "groq_api_key_set": bool(settings.GROQ_API_KEY),
+        "environment": settings.ENVIRONMENT,
+        "timestamp": datetime.utcnow().isoformat()
     }
-
-
-# ============================================================
-# STUDY PLAN V1 (Legacy — Keep for backward compatibility)
-# ============================================================
-
-@router.post("/study-plan", response_model=AIStudyPlanResponse)
-async def generate_study_plan_v1(
-    request: AIStudyPlanRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Legacy study plan endpoint (v1) — kept for backward compatibility"""
-    mistakes = db.query(Mistake).filter(
-        Mistake.user_id == current_user.id,
-        Mistake.is_resolved == False
-    ).limit(50).all()
-
-    weak_topics = list(set([m.topic for m in mistakes]))
-
-    study_plan = await ai_service.generate_study_plan(
-        goal=request.goal,
-        subjects=request.subjects,
-        hours_per_week=request.hours_per_week,
-        weak_topics=weak_topics,
-        days_until_exam=request.days_until_exam,
-        target_score=request.target_score,
-        study_style=request.study_style
-    )
-
-    return {"plan": study_plan}
