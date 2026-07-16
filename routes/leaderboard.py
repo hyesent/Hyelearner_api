@@ -26,12 +26,11 @@ async def get_global_duel_leaderboard(
     results = db.query(
         User.id,
         User.username,
-        User.avatar_url,  # ✅ FIXED: avatar → avatar_url
+        User.avatar_url,
         User.school,
         UserStats.xp,
         UserStats.level,
-        UserStats.current_streak,
-        UserStats.longest_streak,
+        # ✅ REMOVED: current_streak, longest_streak
         func.count(Duel.id).label("total_duels"),
         func.sum(
             case(
@@ -76,8 +75,8 @@ async def get_global_duel_leaderboard(
     ).order_by(
         desc("wins"),
         desc("win_rate"),
-        desc(UserStats.xp),
-        desc(UserStats.current_streak)
+        desc(UserStats.xp)
+        # ✅ REMOVED: desc(UserStats.current_streak)
     ).offset(offset).limit(limit).all()
     
     leaderboard = []
@@ -92,12 +91,11 @@ async def get_global_duel_leaderboard(
             "rank": idx,
             "user_id": row.id,
             "username": row.username,
-            "avatar": row.avatar_url,  # ✅ FIXED: avatar_url
+            "avatar": row.avatar_url,
             "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
-            "streak": row.current_streak or 0,
-            "longest_streak": row.longest_streak or 0,
+            "streak": 0,  # ✅ Default to 0 if no streak field
             "total_duels": total_duels,
             "wins": wins,
             "losses": losses,
@@ -137,11 +135,11 @@ async def get_school_duel_leaderboard(
     results = db.query(
         User.id,
         User.username,
-        User.avatar_url,  # ✅ FIXED
+        User.avatar_url,
         User.school,
         UserStats.xp,
         UserStats.level,
-        UserStats.current_streak,
+        # ✅ REMOVED: current_streak
         func.count(Duel.id).label("total_duels"),
         func.sum(
             case(
@@ -188,11 +186,11 @@ async def get_school_duel_leaderboard(
             "rank": idx,
             "user_id": row.id,
             "username": row.username,
-            "avatar": row.avatar_url,  # ✅ FIXED
+            "avatar": row.avatar_url,
             "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
-            "streak": row.current_streak or 0,
+            "streak": 0,  # ✅ Default to 0
             "total_duels": total_duels,
             "wins": wins,
             "win_rate": win_rate
@@ -225,11 +223,11 @@ async def get_friends_duel_leaderboard(
     results = db.query(
         User.id,
         User.username,
-        User.avatar_url,  # ✅ FIXED
+        User.avatar_url,
         User.school,
         UserStats.xp,
         UserStats.level,
-        UserStats.current_streak,
+        # ✅ REMOVED: current_streak
         func.count(Duel.id).label("total_duels"),
         func.sum(
             case(
@@ -275,11 +273,11 @@ async def get_friends_duel_leaderboard(
             "rank": idx,
             "user_id": row.id,
             "username": row.username,
-            "avatar": row.avatar_url,  # ✅ FIXED
+            "avatar": row.avatar_url,
             "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
-            "streak": row.current_streak or 0,
+            "streak": 0,  # ✅ Default to 0
             "total_duels": total_duels,
             "wins": wins,
             "win_rate": win_rate,
@@ -329,15 +327,14 @@ async def get_user_duel_rank(
         "user_id": user.id,
         "username": user.username,
         "name": user.username,
-        "avatar": user.avatar_url,  # ✅ FIXED
+        "avatar": user.avatar_url,
         "school": user.school or "Unknown",
         "rank": rank,
         "total_users": total_users,
         "top_percent": round((1 - rank / total_users) * 100, 1) if total_users > 0 else 0,
         "xp": stats.xp if stats else 0,
         "level": stats.level if stats else 1,
-        "streak": stats.current_streak if stats else 0,
-        "longest_streak": stats.longest_streak if stats else 0,
+        "streak": 0,  # ✅ Default to 0
         "total_duels": total_duels,
         "wins": wins,
         "losses": losses,
@@ -362,7 +359,7 @@ async def get_weekly_duel_leaderboard(
     weekly_results = db.query(
         User.id,
         User.username,
-        User.avatar_url,  # ✅ FIXED
+        User.avatar_url,
         User.school,
         func.count(Duel.id).label("weekly_duels"),
         func.sum(
@@ -398,7 +395,7 @@ async def get_weekly_duel_leaderboard(
             "user_id": row.id,
             "username": row.username,
             "name": row.username,
-            "avatar": row.avatar_url,  # ✅ FIXED
+            "avatar": row.avatar_url,
             "school": row.school or "Unknown",
             "weekly_duels": row.weekly_duels or 0,
             "weekly_wins": row.weekly_wins or 0,
@@ -423,7 +420,7 @@ async def get_subject_duel_leaderboard(
     results = db.query(
         User.id,
         User.username,
-        User.avatar_url,  # ✅ FIXED
+        User.avatar_url,
         User.school,
         UserStats.xp,
         UserStats.level,
@@ -486,10 +483,11 @@ async def get_subject_duel_leaderboard(
             "user_id": row.id,
             "username": row.username,
             "name": row.username,
-            "avatar": row.avatar_url,  # ✅ FIXED
+            "avatar": row.avatar_url,
             "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
+            "streak": 0,  # ✅ Default to 0
             "total_duels": total_duels,
             "wins": wins,
             "win_rate": win_rate,
@@ -525,7 +523,7 @@ async def get_duel_leaderboard(
                     "name": item["username"],
                     "xp": item["xp"],
                     "level": item["level"],
-                    "streak": item["streak"],
+                    "streak": 0,  # ✅ Default to 0
                     "school": item["school"] or "Unknown"
                 }
                 for item in data["leaderboard"]
@@ -543,7 +541,7 @@ async def get_duel_leaderboard(
                     "name": item["username"],
                     "xp": item["xp"],
                     "level": item["level"],
-                    "streak": item["streak"],
+                    "streak": 0,  # ✅ Default to 0
                     "school": item["school"] or "Unknown"
                 }
                 for item in data
@@ -561,7 +559,7 @@ async def get_duel_leaderboard(
                     "name": item["username"],
                     "xp": item["xp"],
                     "level": item["level"],
-                    "streak": item["streak"],
+                    "streak": 0,  # ✅ Default to 0
                     "school": item["school"] or "Unknown",
                     "is_current_user": item.get("is_current_user", False)
                 }
@@ -582,7 +580,7 @@ async def get_duel_leaderboard(
                     "name": item["username"],
                     "xp": item["xp"],
                     "level": item["level"],
-                    "streak": 0,
+                    "streak": 0,  # ✅ Default to 0
                     "school": item["school"] or "Unknown",
                     "avg_score": item.get("avg_score", 0)
                 }
