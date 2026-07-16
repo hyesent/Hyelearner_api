@@ -11,6 +11,10 @@ from dependencies import get_current_user
 router = APIRouter()
 
 
+# ============================================================
+# GLOBAL LEADERBOARD
+# ============================================================
+
 @router.get("/global")
 async def get_global_duel_leaderboard(
     db: Session = Depends(get_db),
@@ -21,7 +25,7 @@ async def get_global_duel_leaderboard(
     
     results = db.query(
         User.id,
-        User.username,  # ✅ Using username
+        User.username,
         User.avatar,
         User.school,
         UserStats.xp,
@@ -87,9 +91,9 @@ async def get_global_duel_leaderboard(
         leaderboard.append({
             "rank": idx,
             "user_id": row.id,
-            "username": row.username,  # ✅ Using username
+            "username": row.username,
             "avatar": row.avatar,
-            "school": row.school,
+            "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
             "streak": row.current_streak or 0,
@@ -112,6 +116,10 @@ async def get_global_duel_leaderboard(
     }
 
 
+# ============================================================
+# SCHOOL LEADERBOARD
+# ============================================================
+
 @router.get("/school")
 async def get_school_duel_leaderboard(
     db: Session = Depends(get_db),
@@ -128,7 +136,7 @@ async def get_school_duel_leaderboard(
     
     results = db.query(
         User.id,
-        User.username,  # ✅ Using username
+        User.username,
         User.avatar,
         User.school,
         UserStats.xp,
@@ -179,9 +187,9 @@ async def get_school_duel_leaderboard(
         leaderboard.append({
             "rank": idx,
             "user_id": row.id,
-            "username": row.username,  # ✅ Using username
+            "username": row.username,
             "avatar": row.avatar,
-            "school": row.school,
+            "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
             "streak": row.current_streak or 0,
@@ -192,6 +200,10 @@ async def get_school_duel_leaderboard(
     
     return leaderboard
 
+
+# ============================================================
+# FRIENDS LEADERBOARD
+# ============================================================
 
 @router.get("/friends")
 async def get_friends_duel_leaderboard(
@@ -212,7 +224,7 @@ async def get_friends_duel_leaderboard(
     
     results = db.query(
         User.id,
-        User.username,  # ✅ Using username
+        User.username,
         User.avatar,
         User.school,
         UserStats.xp,
@@ -262,9 +274,9 @@ async def get_friends_duel_leaderboard(
         leaderboard.append({
             "rank": idx,
             "user_id": row.id,
-            "username": row.username,  # ✅ Using username
+            "username": row.username,
             "avatar": row.avatar,
-            "school": row.school,
+            "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
             "streak": row.current_streak or 0,
@@ -276,6 +288,10 @@ async def get_friends_duel_leaderboard(
     
     return leaderboard
 
+
+# ============================================================
+# USER RANK
+# ============================================================
 
 @router.get("/user/{user_id}")
 async def get_user_duel_rank(
@@ -311,9 +327,10 @@ async def get_user_duel_rank(
     
     return {
         "user_id": user.id,
-        "username": user.username,  # ✅ Using username
+        "username": user.username,
+        "name": user.username,  # For frontend compatibility
         "avatar": user.avatar,
-        "school": user.school,
+        "school": user.school or "Unknown",
         "rank": rank,
         "total_users": total_users,
         "top_percent": round((1 - rank / total_users) * 100, 1) if total_users > 0 else 0,
@@ -329,6 +346,10 @@ async def get_user_duel_rank(
     }
 
 
+# ============================================================
+# WEEKLY LEADERBOARD
+# ============================================================
+
 @router.get("/weekly")
 async def get_weekly_duel_leaderboard(
     db: Session = Depends(get_db),
@@ -340,7 +361,7 @@ async def get_weekly_duel_leaderboard(
     
     weekly_results = db.query(
         User.id,
-        User.username,  # ✅ Using username
+        User.username,
         User.avatar,
         User.school,
         func.count(Duel.id).label("weekly_duels"),
@@ -375,9 +396,10 @@ async def get_weekly_duel_leaderboard(
         results.append({
             "rank": idx,
             "user_id": row.id,
-            "username": row.username,  # ✅ Using username
+            "username": row.username,
+            "name": row.username,  # For frontend compatibility
             "avatar": row.avatar,
-            "school": row.school,
+            "school": row.school or "Unknown",
             "weekly_duels": row.weekly_duels or 0,
             "weekly_wins": row.weekly_wins or 0,
             "weekly_xp": row.weekly_xp or 0
@@ -385,6 +407,10 @@ async def get_weekly_duel_leaderboard(
     
     return results
 
+
+# ============================================================
+# SUBJECT LEADERBOARD
+# ============================================================
 
 @router.get("/subject")
 async def get_subject_duel_leaderboard(
@@ -396,7 +422,7 @@ async def get_subject_duel_leaderboard(
     
     results = db.query(
         User.id,
-        User.username,  # ✅ Using username
+        User.username,
         User.avatar,
         User.school,
         UserStats.xp,
@@ -458,9 +484,10 @@ async def get_subject_duel_leaderboard(
         leaderboard.append({
             "rank": idx,
             "user_id": row.id,
-            "username": row.username,  # ✅ Using username
+            "username": row.username,
+            "name": row.username,  # For frontend compatibility
             "avatar": row.avatar,
-            "school": row.school,
+            "school": row.school or "Unknown",
             "xp": row.xp or 0,
             "level": row.level or 1,
             "total_duels": total_duels,
@@ -472,6 +499,10 @@ async def get_subject_duel_leaderboard(
     return leaderboard
 
 
+# ============================================================
+# ✅ MAIN ENDPOINT - MATCHES FRONTEND EXPECTATIONS
+# ============================================================
+
 @router.get("")
 async def get_duel_leaderboard(
     filter_type: str = Query("global", regex="^(global|school|friends|subject)$"),
@@ -481,17 +512,101 @@ async def get_duel_leaderboard(
     limit: int = Query(50, ge=1, le=100),
     current_user: User = Depends(get_current_user)
 ):
-    """Combined duel leaderboard endpoint"""
+    """
+    Combined duel leaderboard endpoint - MATCHES FRONTEND EXPECTATIONS
+    
+    Frontend expects:
+    {
+        "rankings": [
+            {
+                "rank": 1,
+                "name": "John Doe",
+                "xp": 12450,
+                "level": 25,
+                "streak": 12,
+                "school": "UNILAG"
+            }
+        ],
+        "totalUsers": 2847,
+        "filter": "global"
+    }
+    """
     
     if filter_type == "global":
-        return await get_global_duel_leaderboard(db, limit, 0)
+        data = await get_global_duel_leaderboard(db, limit, 0)
+        return {
+            "rankings": [
+                {
+                    "rank": item["rank"],
+                    "name": item["username"],
+                    "xp": item["xp"],
+                    "level": item["level"],
+                    "streak": item["streak"],
+                    "school": item["school"] or "Unknown"
+                }
+                for item in data["leaderboard"]
+            ],
+            "totalUsers": data["total"],
+            "filter": "global"
+        }
+    
     elif filter_type == "school":
-        return await get_school_duel_leaderboard(db, school, limit, current_user)
+        data = await get_school_duel_leaderboard(db, school, limit, current_user)
+        return {
+            "rankings": [
+                {
+                    "rank": item["rank"],
+                    "name": item["username"],
+                    "xp": item["xp"],
+                    "level": item["level"],
+                    "streak": item["streak"],
+                    "school": item["school"] or "Unknown"
+                }
+                for item in data
+            ],
+            "totalUsers": len(data),
+            "filter": "school"
+        }
+    
     elif filter_type == "friends":
-        return await get_friends_duel_leaderboard(current_user, db, limit)
+        data = await get_friends_duel_leaderboard(current_user, db, limit)
+        return {
+            "rankings": [
+                {
+                    "rank": item["rank"],
+                    "name": item["username"],
+                    "xp": item["xp"],
+                    "level": item["level"],
+                    "streak": item["streak"],
+                    "school": item["school"] or "Unknown",
+                    "is_current_user": item.get("is_current_user", False)
+                }
+                for item in data
+            ],
+            "totalUsers": len(data),
+            "filter": "friends"
+        }
+    
     elif filter_type == "subject":
         if not subject:
             raise HTTPException(400, "Subject is required for subject filter")
-        return await get_subject_duel_leaderboard(subject, db, limit)
+        data = await get_subject_duel_leaderboard(subject, db, limit)
+        return {
+            "rankings": [
+                {
+                    "rank": item["rank"],
+                    "name": item["username"],
+                    "xp": item["xp"],
+                    "level": item["level"],
+                    "streak": 0,  # Subject doesn't track streak
+                    "school": item["school"] or "Unknown",
+                    "avg_score": item.get("avg_score", 0)
+                }
+                for item in data
+            ],
+            "totalUsers": len(data),
+            "filter": "subject",
+            "subject": subject
+        }
     
     return {"error": "Invalid filter"}
