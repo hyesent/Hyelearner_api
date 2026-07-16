@@ -345,7 +345,7 @@ class SubscriptionStatusResponse(BaseModel):
 # ============================================================
 
 class AIExplanationRequest(BaseModel):
-    question_id: str
+    question: str
     user_answer: str
 
 class AIExplanationResponse(BaseModel):
