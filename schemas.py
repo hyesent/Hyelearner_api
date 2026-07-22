@@ -416,7 +416,7 @@ class DuelCreate(BaseModel):
     count: int = Field(10, ge=5, le=20)
     time_limit: int = Field(300, ge=60, le=600)
     is_public: bool = False
-    questions: List[Dict] = Field(default_factory=list)  # ✅ Fixed indentation
+    questions: List[Dict] = Field(default_factory=list)
 
 class DuelJoin(BaseModel):
     code: str
@@ -971,4 +971,267 @@ class HyeTutorCachedResponse(BaseModel):
     date: str
     expires_at: str
     data: HyeTutorAnalyzeResponse
-    
+
+
+# ============================================================
+# SOCIAL SCHEMAS
+# ============================================================
+
+# ============================================================
+# USER SEARCH
+# ============================================================
+
+class UserSearchResult(BaseModel):
+    id: int
+    username: str
+    firstName: str
+    lastName: str
+    avatar: Optional[str]
+    school: Optional[str]
+    exam: Optional[str]
+    streak: int
+    xp: int
+    level: int
+    accuracy: float
+    isFriend: bool
+    friendRequestSent: bool
+    isOnline: bool
+
+
+class UserSearchResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+# ============================================================
+# FRIENDS
+# ============================================================
+
+class FriendRequestResponse(BaseModel):
+    id: int
+    fromUser: Dict[str, Any]
+    sentAt: datetime
+
+
+class FriendResponse(BaseModel):
+    id: int
+    username: str
+    firstName: str
+    lastName: str
+    avatar: Optional[str]
+    school: Optional[str]
+    exam: Optional[str]
+    streak: int
+    xp: int
+    level: int
+    accuracy: float
+    isOnline: bool
+    lastSeen: Optional[datetime]
+    unreadMessages: int
+    friendSince: datetime
+
+
+class FriendsListResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+# ============================================================
+# MESSAGES
+# ============================================================
+
+class MessageResponse(BaseModel):
+    id: int
+    senderId: int
+    receiverId: int
+    message: str
+    isRead: bool
+    createdAt: datetime
+
+
+class ConversationResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+class SendMessageRequest(BaseModel):
+    recipientId: int
+    message: str
+
+
+class UnreadConversation(BaseModel):
+    friendId: int
+    friendUsername: str
+    friendAvatar: Optional[str]
+    unreadCount: int
+    lastMessage: str
+    lastMessageAt: datetime
+
+
+class UnreadCountResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+# ============================================================
+# DUEL INVITES
+# ============================================================
+
+class DuelInviteRequest(BaseModel):
+    friendId: int
+    subject: str
+    topic: Optional[str] = None
+    questionCount: int = 10
+    timeLimit: int = 300
+
+
+class DuelInviteResponse(BaseModel):
+    id: int
+    fromUser: Dict[str, Any]
+    subject: str
+    topic: Optional[str]
+    questionCount: int
+    timeLimit: int
+    status: str
+    invitedAt: datetime
+    expiresAt: datetime
+
+
+class DuelInviteListResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+class DuelInviteRespondRequest(BaseModel):
+    accept: bool
+
+
+# ============================================================
+# STUDY GROUPS
+# ============================================================
+
+class StudyGroupCreateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    subject: Optional[str] = None
+    memberIds: List[int] = []
+
+
+class StudyGroupResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    subject: Optional[str]
+    memberCount: int
+    isMember: bool
+    createdBy: int
+    createdAt: datetime
+    lastActivity: datetime
+
+
+class StudyGroupListResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+class StudyGroupJoinRequest(BaseModel):
+    inviteCode: Optional[str] = None
+
+
+class StudyGroupJoinResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+class StudyGroupMessageResponse(BaseModel):
+    id: int
+    sender: Dict[str, Any]
+    message: str
+    isPinned: bool
+    isAnnouncement: bool
+    createdAt: datetime
+
+
+class StudyGroupMessagesResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+class SendGroupMessageRequest(BaseModel):
+    message: str
+    isAnnouncement: bool = False
+
+
+class StudyGroupMemberResponse(BaseModel):
+    id: int
+    username: str
+    firstName: str
+    lastName: str
+    avatar: Optional[str]
+    role: str
+    joinedAt: datetime
+
+
+class StudyGroupMembersResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+# ============================================================
+# ACTIVITY FEED
+# ============================================================
+
+class ActivityResponse(BaseModel):
+    id: int
+    type: str
+    friend: Dict[str, Any]
+    message: str
+    details: Dict[str, Any]
+    createdAt: datetime
+
+
+class ActivityFeedResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+class GlobalStatsResponse(BaseModel):
+    totalUsers: int
+    onlineNow: int
+    sessionsToday: int
+
+
+class GlobalActivityResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+# ============================================================
+# CHALLENGES
+# ============================================================
+
+class ChallengeCreateRequest(BaseModel):
+    type: str  # streak, questions, accuracy, xp
+    friendIds: List[int]
+    duration: int = 7
+    stake: Optional[str] = None
+
+
+class ChallengeResponse(BaseModel):
+    id: int
+    type: str
+    creator: int
+    participants: List[Dict[str, Any]]
+    status: str
+    startsAt: datetime
+    endsAt: datetime
+
+
+class ChallengeListResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+class ChallengeStatusResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
