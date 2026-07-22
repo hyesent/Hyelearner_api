@@ -1,8 +1,10 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, JSON, ForeignKey, Enum, Index
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, JSON, ForeignKey, Enum, Index, Date
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
 import enum
+import uuid
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 
 # ============================================================
@@ -64,7 +66,7 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)
-    last_study_plan_update = Column(DateTime(timezone=True), nullable=True)  # ✅ ADDED
+    last_study_plan_update = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     settings = relationship("UserSettings", back_populates="user", uselist=False)
@@ -83,6 +85,13 @@ class User(Base):
     referrals_received = relationship("Referral", foreign_keys="Referral.referred_id")
     duels_challenged = relationship("Duel", foreign_keys="Duel.challenger_id")
     duels_opponent = relationship("Duel", foreign_keys="Duel.opponent_id")
+    
+    # ============================================================
+    # HYETUTOR RELATIONSHIPS
+    # ============================================================
+    hyetutor_caches = relationship("HyetutorCache", back_populates="user", cascade="all, delete-orphan")
+    missions = relationship("Mission", back_populates="user", cascade="all, delete-orphan")
+    reflections = relationship("Reflection", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserSettings(Base):
@@ -148,10 +157,10 @@ class Subscription(Base):
 class Question(Base):
     __tablename__ = "questions"
 
-    id = Column(String, primary_key=True, index=True)  # e.g., "math_geo_tri_001"
+    id = Column(String, primary_key=True, index=True)
     type = Column(String, default="multiple_choice")
     question = Column(Text, nullable=False)
-    options = Column(JSON, nullable=False)  # ["A. 180°", "B. 90°", ...]
+    options = Column(JSON, nullable=False)
     answer = Column(String, nullable=False)
     explanation = Column(Text, nullable=True)
     difficulty = Column(Enum(Difficulty), default=Difficulty.MEDIUM)
@@ -177,7 +186,7 @@ class Lesson(Base):
     topic = Column(String, nullable=False)
     title = Column(String, nullable=False)
     content = Column(Text, nullable=False)
-    reading_time = Column(Integer, nullable=True)  # minutes
+    reading_time = Column(Integer, nullable=True)
     order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -232,7 +241,7 @@ class Mistake(Base):
     correct_answer = Column(String, nullable=False)
     subject = Column(String, nullable=False)
     topic = Column(String, nullable=False)
-    explanation = Column(Text, nullable=True)  # AI cached
+    explanation = Column(Text, nullable=True)
     is_resolved = Column(Boolean, default=False)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -267,7 +276,7 @@ class TopicMastery(Base):
     topic = Column(String, nullable=False)
     correct = Column(Integer, default=0)
     total = Column(Integer, default=0)
-    mastery_score = Column(Float, default=0.0)  # ✅ ADDED (0-100)
+    mastery_score = Column(Float, default=0.0)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", back_populates="topic_mastery")
@@ -318,7 +327,7 @@ class Duel(Base):
     topic = Column(String, nullable=True)
     question_ids = Column(JSON, default=[])
     status = Column(String, default="waiting")
-    is_public = Column(Boolean, default=False)  
+    is_public = Column(Boolean, default=False)
     winner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     challenger_score = Column(Integer, default=0)
     opponent_score = Column(Integer, default=0)
@@ -327,8 +336,8 @@ class Duel(Base):
     time_limit = Column(Integer, default=300)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
- 
-    questions_data = Column(JSON, default=[]) 
+    questions_data = Column(JSON, default=[])
+
     challenger = relationship("User", foreign_keys=[challenger_id])
     opponent = relationship("User", foreign_keys=[opponent_id])
     winner = relationship("User", foreign_keys=[winner_id])
@@ -365,3 +374,79 @@ class Referral(Base):
 
     referrer = relationship("User", foreign_keys=[referrer_id])
     referred = relationship("User", foreign_keys=[referred_id])
+
+
+# ============================================================
+# HYETUTOR TABLES
+# ============================================================
+
+class HyetutorCache(Base):
+    __tablename__ = "hyetutor_cache"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    date = Column(Date, nullable=False)
+    data = Column(JSON, nullable=False)
+    generated_at = Column(DateTime(timezone=True), default=func.now())
+    
+    # Relationships
+    user = relationship("User", back_populates="hyetutor_caches")
+    
+    __table_args__ = (
+        Index('idx_hyetutor_cache_user_date', 'user_id', 'date'),
+    )
+    
+    def __repr__(self):
+        return f"<HyetutorCache user={self.user_id} date={self.date}>"
+
+
+class Mission(Base):
+    __tablename__ = "missions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    date = Column(Date, nullable=False)
+    text = Column(String(255), nullable=False)
+    reason = Column(String(255), nullable=True)
+    priority = Column(String(20), default="medium")  # critical, high, medium, low
+    xp_reward = Column(Integer, default=25)
+    estimated_time = Column(Integer, nullable=True)  # in minutes
+    completed = Column(Boolean, default=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    order = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    
+    # Relationships
+    user = relationship("User", back_populates="missions")
+    
+    __table_args__ = (
+        Index('idx_mission_user_date', 'user_id', 'date'),
+        Index('idx_mission_completed', 'completed'),
+    )
+    
+    def __repr__(self):
+        return f"<Mission user={self.user_id} date={self.date} completed={self.completed}>"
+
+
+class Reflection(Base):
+    __tablename__ = "reflections"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    date = Column(Date, nullable=False)
+    mood = Column(String(20), nullable=True)  # great, okay, difficult
+    notes = Column(Text, nullable=True)
+    time_taken = Column(Float, nullable=True)  # hours studied
+    sessions_completed = Column(Integer, default=0)
+    distractions = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    
+    # Relationships
+    user = relationship("User", back_populates="reflections")
+    
+    __table_args__ = (
+        Index('idx_reflection_user_date', 'user_id', 'date'),
+    )
+    
+    def __repr__(self):
+        return f"<Reflection user={self.user_id} date={self.date} mood={self.mood}>"
