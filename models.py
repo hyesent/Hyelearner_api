@@ -59,7 +59,7 @@ class User(Base):
     is_verified = Column(Boolean, default=False)
     school = Column(String, nullable=True)
     country = Column(String, nullable=True)
-    exam = Column(String, nullable=True)  # jamb, waec, neco, ssce, pre-university
+    exam = Column(String, nullable=True)
     bio = Column(Text, nullable=True)
     goal = Column(String, nullable=True)
     subscription_expires = Column(DateTime(timezone=True), nullable=True)
@@ -406,11 +406,12 @@ class Mission(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
+    mission_code = Column(String(50), nullable=True)  # ✅ ADDED
     text = Column(String(255), nullable=False)
     reason = Column(String(255), nullable=True)
-    priority = Column(String(20), default="medium")  # critical, high, medium, low
+    priority = Column(String(20), default="medium")
     xp_reward = Column(Integer, default=25)
-    estimated_time = Column(Integer, nullable=True)  # in minutes
+    estimated_time = Column(Integer, nullable=True)
     completed = Column(Boolean, default=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     order = Column(Integer, default=0)
@@ -421,6 +422,7 @@ class Mission(Base):
     
     __table_args__ = (
         Index('idx_mission_user_date', 'user_id', 'date'),
+        Index('idx_mission_code', 'mission_code'),  # ✅ ADDED
         Index('idx_mission_completed', 'completed'),
     )
     
@@ -434,9 +436,9 @@ class Reflection(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
-    mood = Column(String(20), nullable=True)  # great, okay, difficult
+    mood = Column(String(20), nullable=True)
     notes = Column(Text, nullable=True)
-    time_taken = Column(Float, nullable=True)  # hours studied
+    time_taken = Column(Float, nullable=True)
     sessions_completed = Column(Integer, default=0)
     distractions = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), default=func.now())
