@@ -374,6 +374,45 @@ Be specific, actionable, and encouraging. Use the exact JSON structure above.
             "rewards": []
         }
 
+    # ============================================================
+    # GENERATE DAILY DIGEST — AI CALL
+    # ============================================================
+    
+    async def generate_daily_digest(self, data: Dict[str, Any], exam_date: str = None) -> Dict[str, Any]:
+        """Generate daily digest using Gemini (primary) and Groq (fallback)."""
+        prompt = self.build_ai_prompt(data, exam_date)
+        
+        response_text = None
+        
+        # Try Gemini first
+        if self.ai.gemini:
+            try:
+                response = self.ai.gemini.generate_content(prompt)
+                response_text = response.text
+                print("✅ Gemini generated HyeTutor digest")
+            except Exception as e:
+                print(f"❌ Gemini error: {e}")
+        
+        # Fallback to Groq if Gemini fails
+        if not response_text and self.ai.groq:
+            try:
+                response = self.ai.groq.chat.completions.create(
+                    model=self.ai.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=2500,
+                    temperature=0.7
+                )
+                response_text = response.choices[0].message.content
+                print("✅ Groq generated HyeTutor digest (fallback)")
+            except Exception as e:
+                print(f"❌ Groq error: {e}")
+        
+        if not response_text:
+            print("❌ Both AI providers failed, using fallback")
+            return self._get_fallback_response()
+        
+        return self.parse_ai_response(response_text)
+
 
 # ============================================================
 # INSTANCE
