@@ -93,6 +93,24 @@ class User(Base):
     missions = relationship("Mission", back_populates="user", cascade="all, delete-orphan")
     reflections = relationship("Reflection", back_populates="user", cascade="all, delete-orphan")
 
+    # ============================================================
+    # SOCIAL RELATIONSHIPS
+    # ============================================================
+    friend_requests_sent = relationship("FriendRequest", foreign_keys="FriendRequest.sender_id", back_populates="sender")
+    friend_requests_received = relationship("FriendRequest", foreign_keys="FriendRequest.receiver_id", back_populates="receiver")
+    friendships = relationship("Friendship", foreign_keys="Friendship.user_id", back_populates="user")
+    friends = relationship("Friendship", foreign_keys="Friendship.friend_id", back_populates="friend_user")
+    messages_sent = relationship("Message", foreign_keys="Message.sender_id", back_populates="sender")
+    messages_received = relationship("Message", foreign_keys="Message.receiver_id", back_populates="receiver")
+    duel_invites_sent = relationship("DuelInvite", foreign_keys="DuelInvite.sender_id", back_populates="sender")
+    duel_invites_received = relationship("DuelInvite", foreign_keys="DuelInvite.receiver_id", back_populates="receiver")
+    group_memberships = relationship("StudyGroupMember", back_populates="user")
+    group_messages = relationship("StudyGroupMessage", back_populates="sender")
+    groups_created = relationship("StudyGroup", back_populates="creator")
+    activities = relationship("Activity", back_populates="user")
+    challenges_created = relationship("Challenge", back_populates="creator")
+    challenge_participants = relationship("ChallengeParticipant", back_populates="user")
+
 
 class UserSettings(Base):
     __tablename__ = "user_settings"
@@ -406,7 +424,7 @@ class Mission(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
-    mission_code = Column(String(50), nullable=True)  # ✅ ADDED
+    mission_code = Column(String(50), nullable=True)
     text = Column(String(255), nullable=False)
     reason = Column(String(255), nullable=True)
     priority = Column(String(20), default="medium")
@@ -422,7 +440,7 @@ class Mission(Base):
     
     __table_args__ = (
         Index('idx_mission_user_date', 'user_id', 'date'),
-        Index('idx_mission_code', 'mission_code'),  # ✅ ADDED
+        Index('idx_mission_code', 'mission_code'),
         Index('idx_mission_completed', 'completed'),
     )
     
@@ -452,3 +470,267 @@ class Reflection(Base):
     
     def __repr__(self):
         return f"<Reflection user={self.user_id} date={self.date} mood={self.mood}>"
+
+
+# ============================================================
+# SOCIAL TABLES
+# ============================================================
+
+class FriendRequest(Base):
+    __tablename__ = "friend_requests"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    receiver_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(20), default="pending")  # pending, accepted, rejected
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    sender = relationship("User", foreign_keys=[sender_id], back_populates="friend_requests_sent")
+    receiver = relationship("User", foreign_keys=[receiver_id], back_populates="friend_requests_received")
+    
+    __table_args__ = (
+        Index('idx_friend_requests_sender', 'sender_id'),
+        Index('idx_friend_requests_receiver', 'receiver_id'),
+        Index('idx_friend_requests_status', 'status'),
+    )
+    
+    def __repr__(self):
+        return f"<FriendRequest sender={self.sender_id} receiver={self.receiver_id} status={self.status}>"
+
+
+class Friendship(Base):
+    __tablename__ = "friendships"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    friend_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id], back_populates="friendships")
+    friend_user = relationship("User", foreign_keys=[friend_id], back_populates="friends")
+    
+    __table_args__ = (
+        Index('idx_friendships_user', 'user_id'),
+        Index('idx_friendships_friend', 'friend_id'),
+        Index('idx_friendships_user_friend', 'user_id', 'friend_id', unique=True),
+    )
+    
+    def __repr__(self):
+        return f"<Friendship user={self.user_id} friend={self.friend_id}>"
+
+
+class Message(Base):
+    __tablename__ = "messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    receiver_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    message = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    parent_message_id = Column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    sender = relationship("User", foreign_keys=[sender_id], back_populates="messages_sent")
+    receiver = relationship("User", foreign_keys=[receiver_id], back_populates="messages_received")
+    parent = relationship("Message", remote_side=[id], foreign_keys=[parent_message_id])
+    
+    __table_args__ = (
+        Index('idx_messages_sender', 'sender_id'),
+        Index('idx_messages_receiver', 'receiver_id'),
+        Index('idx_messages_conversation', 'sender_id', 'receiver_id'),
+        Index('idx_messages_read', 'is_read'),
+    )
+    
+    def __repr__(self):
+        return f"<Message sender={self.sender_id} receiver={self.receiver_id} read={self.is_read}>"
+
+
+class DuelInvite(Base):
+    __tablename__ = "duel_invites"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    receiver_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    subject = Column(String(100), nullable=False)
+    topic = Column(String(100), nullable=True)
+    question_count = Column(Integer, default=10)
+    time_limit = Column(Integer, default=300)
+    status = Column(String(20), default="pending")  # pending, accepted, rejected, expired
+    duel_id = Column(Integer, ForeignKey("duels.id", ondelete="SET NULL"), nullable=True)
+    invited_at = Column(DateTime(timezone=True), default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    sender = relationship("User", foreign_keys=[sender_id], back_populates="duel_invites_sent")
+    receiver = relationship("User", foreign_keys=[receiver_id], back_populates="duel_invites_received")
+    duel = relationship("Duel", foreign_keys=[duel_id])
+    
+    __table_args__ = (
+        Index('idx_duel_invites_sender', 'sender_id'),
+        Index('idx_duel_invites_receiver', 'receiver_id'),
+        Index('idx_duel_invites_status', 'status'),
+    )
+    
+    def __repr__(self):
+        return f"<DuelInvite sender={self.sender_id} receiver={self.receiver_id} status={self.status}>"
+
+
+class StudyGroup(Base):
+    __tablename__ = "study_groups"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    subject = Column(String(50), nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    invite_code = Column(String(20), unique=True, index=True, nullable=True)
+    max_members = Column(Integer, default=20)
+    is_private = Column(Boolean, default=False)
+    pinned_message_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    creator = relationship("User", foreign_keys=[created_by], back_populates="groups_created")
+    members = relationship("StudyGroupMember", back_populates="group", cascade="all, delete-orphan")
+    messages = relationship("StudyGroupMessage", back_populates="group", cascade="all, delete-orphan")
+    
+    __table_args__ = (
+        Index('idx_study_groups_subject', 'subject'),
+        Index('idx_study_groups_invite_code', 'invite_code'),
+    )
+    
+    def __repr__(self):
+        return f"<StudyGroup id={self.id} name={self.name} members={len(self.members)}>"
+
+
+class StudyGroupMember(Base):
+    __tablename__ = "study_group_members"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("study_groups.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(20), default="member")  # admin, moderator, member
+    joined_at = Column(DateTime(timezone=True), default=func.now())
+    last_read_at = Column(DateTime(timezone=True), default=func.now())
+    
+    # Relationships
+    group = relationship("StudyGroup", back_populates="members")
+    user = relationship("User", back_populates="group_memberships")
+    
+    __table_args__ = (
+        Index('idx_group_members_group', 'group_id'),
+        Index('idx_group_members_user', 'user_id'),
+        Index('idx_group_members_group_user', 'group_id', 'user_id', unique=True),
+    )
+    
+    def __repr__(self):
+        return f"<StudyGroupMember group={self.group_id} user={self.user_id} role={self.role}>"
+
+
+class StudyGroupMessage(Base):
+    __tablename__ = "study_group_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("study_groups.id", ondelete="CASCADE"), nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    message = Column(Text, nullable=False)
+    is_pinned = Column(Boolean, default=False)
+    is_announcement = Column(Boolean, default=False)
+    parent_message_id = Column(Integer, ForeignKey("study_group_messages.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    group = relationship("StudyGroup", back_populates="messages")
+    sender = relationship("User", back_populates="group_messages")
+    parent = relationship("StudyGroupMessage", remote_side=[id], foreign_keys=[parent_message_id])
+    
+    __table_args__ = (
+        Index('idx_group_messages_group', 'group_id'),
+        Index('idx_group_messages_pinned', 'is_pinned'),
+        Index('idx_group_messages_announcement', 'is_announcement'),
+    )
+    
+    def __repr__(self):
+        return f"<StudyGroupMessage group={self.group_id} sender={self.sender_id} pinned={self.is_pinned}>"
+
+
+class Challenge(Base):
+    __tablename__ = "challenges"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    creator_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    type = Column(String(30), nullable=False)  # streak, questions, accuracy, xp
+    duration = Column(Integer, default=7)  # days
+    stake = Column(String(50), nullable=True)
+    status = Column(String(20), default="active")  # active, completed, cancelled
+    starts_at = Column(DateTime(timezone=True), default=func.now())
+    ends_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    creator = relationship("User", foreign_keys=[creator_id], back_populates="challenges_created")
+    participants = relationship("ChallengeParticipant", back_populates="challenge", cascade="all, delete-orphan")
+    
+    __table_args__ = (
+        Index('idx_challenges_type', 'type'),
+        Index('idx_challenges_status', 'status'),
+    )
+    
+    def __repr__(self):
+        return f"<Challenge id={self.id} type={self.type} status={self.status}>"
+
+
+class ChallengeParticipant(Base):
+    __tablename__ = "challenge_participants"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    challenge_id = Column(Integer, ForeignKey("challenges.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    joined_at = Column(DateTime(timezone=True), default=func.now())
+    
+    # Relationships
+    challenge = relationship("Challenge", back_populates="participants")
+    user = relationship("User", back_populates="challenge_participants")
+    
+    __table_args__ = (
+        Index('idx_challenge_participants_challenge', 'challenge_id'),
+        Index('idx_challenge_participants_user', 'user_id'),
+        Index('idx_challenge_participants_challenge_user', 'challenge_id', 'user_id', unique=True),
+    )
+    
+    def __repr__(self):
+        return f"<ChallengeParticipant challenge={self.challenge_id} user={self.user_id}>"
+
+
+class Activity(Base):
+    __tablename__ = "activities"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    type = Column(String(30), nullable=False)  # session, streak, level_up, duel, message, group, challenge
+    message = Column(String(255), nullable=True)
+    data = Column(JSON, default={})
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    
+    # Relationships
+    user = relationship("User", back_populates="activities")
+    
+    __table_args__ = (
+        Index('idx_activities_user', 'user_id'),
+        Index('idx_activities_type', 'type'),
+        Index('idx_activities_created', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<Activity user={self.user_id} type={self.type}>"
