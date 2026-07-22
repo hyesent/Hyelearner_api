@@ -542,3 +542,433 @@ class SyncResponse(BaseModel):
     synced_at: datetime
     synced_items: int
     conflicts: Optional[List[Dict]] = None
+
+
+# ============================================================
+# HYETUTOR — ANALYZE REQUEST (Bundled Data from Frontend)
+# ============================================================
+
+class StudyPlanExamInfo(BaseModel):
+    exam_type: str = "jamb"
+    exam_date: str
+
+class StudyPlanSummary(BaseModel):
+    days_remaining: int
+    total_topics: int
+    completed_topics: int
+    total_hours: int
+    completion_percentage: int
+    weak_areas: List[str]
+
+class WeeklyTopic(BaseModel):
+    subject: str
+    topic: str
+    hours: float
+
+class WeeklyScheduleItem(BaseModel):
+    day: str
+    topics: List[WeeklyTopic]
+    total_hours: float
+    completed: bool
+
+class StudyPlanToday(BaseModel):
+    topics: List[str]
+    completed: int
+    remaining: int
+    hours_completed: float
+    hours_remaining: float
+
+class StudyPlanData(BaseModel):
+    exam_info: StudyPlanExamInfo
+    summary: StudyPlanSummary
+    weekly_schedule: List[WeeklyScheduleItem]
+    today: StudyPlanToday
+
+
+class MasteryTopic(BaseModel):
+    accuracy: int
+    attempts: int
+    last_updated: str
+
+
+class SessionItem(BaseModel):
+    id: str
+    date: str
+    subject: str
+    topic: str
+    mode: str
+    score: int
+    total: int
+    correct: int
+    wrong: int
+    accuracy: int
+    time_taken: int
+    difficulty: str
+    is_mock: bool
+
+
+class MistakeItem(BaseModel):
+    id: str
+    question: str
+    user_answer: str
+    correct_answer: str
+    topic: str
+    subject: str
+    created_at: str
+
+
+class WeakTopicItem(BaseModel):
+    topic: str
+    accuracy: int
+    priority: str
+    mistake_count: int
+
+
+class GamificationData(BaseModel):
+    xp: int
+    level: int
+    streak: int
+    longest_streak: int
+    badges: List[str]
+    total_sessions: int
+    total_xp: int
+
+
+class RevisionTask(BaseModel):
+    id: str
+    title: str
+    completed: bool
+    estimatedTime: int
+
+
+class RevisionPlannerData(BaseModel):
+    tasks: List[RevisionTask]
+    tasks_completed_today: int
+    tasks_total_today: int
+    time_studied_today: int
+    streak: int
+
+
+class PreferencesData(BaseModel):
+    study_style: str
+    target_score: str
+    hours_per_week: int
+    study_hours_start: str
+    study_hours_end: str
+
+
+class ProfileData(BaseModel):
+    name: str
+    school: str
+    exam: str
+    country: str
+    subjects: List[str]
+
+
+class ConsistencyData(BaseModel):
+    study_days: int
+    missed_days: int
+    total_days: int
+    avg_sessions_per_day: float
+    day_breakdown: Dict[str, int]
+    session_times: List[str]
+
+
+class HyeTutorDataBundle(BaseModel):
+    study_plan: StudyPlanData
+    mastery: Dict[str, MasteryTopic]
+    sessions: List[SessionItem]
+    mistakes: List[MistakeItem]
+    weak_topics: List[WeakTopicItem]
+    gamification: GamificationData
+    revision_planner: RevisionPlannerData
+    preferences: PreferencesData
+    profile: ProfileData
+    consistency: ConsistencyData
+
+
+class HyeTutorAnalyzeRequest(BaseModel):
+    user_id: str
+    date: str
+    exam_date: str
+    difficulty_preference: str = "balanced"
+    data: HyeTutorDataBundle
+
+
+# ============================================================
+# HYETUTOR — ANALYZE RESPONSE (All 18 Sections)
+# ============================================================
+
+class MissionResponse(BaseModel):
+    id: str
+    text: str
+    reason: str
+    priority: str
+    xp_reward: int
+    estimated_time: int
+    completed: bool
+    order: int
+
+
+class NextSessionResponse(BaseModel):
+    time: str
+    subject: str
+    topic: str
+    duration: int
+    difficulty: str
+    priority: str
+    reason: str
+
+
+class TimeBudgetResponse(BaseModel):
+    total: float
+    completed: float
+    remaining: float
+    unit: str
+
+
+class WeeklyGoalResponse(BaseModel):
+    total: int
+    completed: int
+    remaining: int
+    percentage: int
+    unit: str
+
+
+class PerformanceResponse(BaseModel):
+    exam_readiness: int
+    confidence: int
+    consistency: int
+    focus: int
+    burnout_risk: str
+    burnout_signs: List[str]
+
+
+class SubjectConfidenceResponse(BaseModel):
+    name: str
+    mastery: int
+    confidence: int
+    status: str
+    trend: str
+    trend_amount: int
+    priority: str
+
+
+class ForecastResponse(BaseModel):
+    days_remaining: int
+    topics_remaining: int
+    topics_per_day_needed: float
+    current_pace: float
+    pace_status: str
+    estimated_completion: str
+    days_behind: int
+    completion_probability: int
+    needs_adjustment: bool
+    recommendation: str
+    daily_target: float
+
+
+class InsightResponse(BaseModel):
+    id: str
+    type: str
+    message: str
+    action: Optional[str] = None
+    priority: str
+    suggestion: Optional[str] = None
+
+
+class HabitResponse(BaseModel):
+    icon: str
+    text: str
+    detail: str
+
+
+class MomentumWeeklyData(BaseModel):
+    day: str
+    hours: float
+
+
+class MomentumResponse(BaseModel):
+    hours: float
+    average_per_day: float
+    best_day: str
+    longest_session: str
+    missed_days: int
+    streak: int
+    weekly_data: List[MomentumWeeklyData]
+
+
+class RevisionQueueItem(BaseModel):
+    topic: str
+    subject: str
+    days_ago: int
+    priority: str
+    confidence: int
+
+
+class QuickStatsResponse(BaseModel):
+    topics_remaining: int
+    lessons_remaining: int
+    questions_remaining: int
+    days_ahead: int
+
+
+class PlanAdjustmentItem(BaseModel):
+    topic: str
+    hours: int
+    reason: str
+
+
+class RescheduleItem(BaseModel):
+    topic: str
+    from_date: str
+    to_date: str
+    reason: str
+
+
+class PlanAdjustmentsResponse(BaseModel):
+    add: List[PlanAdjustmentItem]
+    remove: List[PlanAdjustmentItem]
+    reschedule: List[RescheduleItem]
+    new_load: float
+    previous_load: float
+    adjusted: bool
+
+
+class EmergencyResponse(BaseModel):
+    active: bool
+    reason: Optional[str] = None
+    days_to_exam: int
+
+
+class RewardResponse(BaseModel):
+    id: str
+    label: str
+    xp: int
+    badge: str
+    unlocked: bool
+    claimed: bool
+
+
+class HyeTutorAnalyzeResponse(BaseModel):
+    success: bool = True
+    generated_at: str
+    missions: List[MissionResponse]
+    total_xp_reward: int
+    missions_progress: int
+    next_session: NextSessionResponse
+    time_budget: TimeBudgetResponse
+    weekly_goal: WeeklyGoalResponse
+    performance: PerformanceResponse
+    subjects: List[SubjectConfidenceResponse]
+    forecast: ForecastResponse
+    insights: List[InsightResponse]
+    habits: List[HabitResponse]
+    momentum: MomentumResponse
+    revision_queue: List[RevisionQueueItem]
+    quick_stats: QuickStatsResponse
+    calendar_days: List[int]
+    motivation: str
+    plan_adjustments: PlanAdjustmentsResponse
+    emergency: EmergencyResponse
+    rewards: List[RewardResponse]
+    examDays: int
+
+
+# ============================================================
+# HYETUTOR — CHAT Request & Response
+# ============================================================
+
+class ChatContext(BaseModel):
+    user_id: str
+    recent_sessions: List[Dict[str, Any]]
+    mastery: Dict[str, int]
+    weak_topics: List[Dict[str, Any]]
+    mistakes: List[Dict[str, Any]]
+    gamification: Dict[str, Any]
+    exam_days_remaining: int
+    target_score: str
+
+
+class HyeTutorChatRequest(BaseModel):
+    question: str
+    context: Optional[ChatContext] = None
+
+
+class SuggestedAction(BaseModel):
+    action: str
+    duration: int
+
+
+class HyeTutorChatResponse(BaseModel):
+    success: bool = True
+    answer: str
+    confidence: int
+    suggested_actions: List[SuggestedAction]
+    related_insights: List[str]
+
+
+# ============================================================
+# HYETUTOR — MISSION COMPLETE
+# ============================================================
+
+class MissionCompleteRequest(BaseModel):
+    mission_id: str
+    completed_at: Optional[str] = None
+
+
+class MissionCompleteResponse(BaseModel):
+    success: bool = True
+    mission: Dict[str, Any]
+    xp_updated: int
+    level_updated: int
+    badge_unlocked: Optional[str] = None
+
+
+# ============================================================
+# HYETUTOR — REFLECTION
+# ============================================================
+
+class ReflectionRequest(BaseModel):
+    date: str
+    mood: str  # great, okay, difficult
+    notes: Optional[str] = None
+    time_taken: float
+    sessions_completed: int
+    distractions: Optional[str] = None
+
+
+class ReflectionAdjustments(BaseModel):
+    workload_reduced: bool
+    physics_increased: bool
+    new_topics_blocked: bool
+    new_load: float
+    recommendation: str
+
+
+class ReflectionTask(BaseModel):
+    text: str
+    duration: int
+
+
+class ReflectionNewSchedule(BaseModel):
+    tasks: List[ReflectionTask]
+    total_hours: float
+
+
+class ReflectionResponse(BaseModel):
+    success: bool = True
+    adjustments: ReflectionAdjustments
+    new_schedule: Dict[str, ReflectionNewSchedule]
+
+
+# ============================================================
+# HYETUTOR — CACHED Response
+# ============================================================
+
+class HyeTutorCachedResponse(BaseModel):
+    cached: bool = True
+    date: str
+    expires_at: str
+    data: HyeTutorAnalyzeResponse
+    
