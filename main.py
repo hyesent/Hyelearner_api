@@ -107,19 +107,8 @@ app.include_router(referrals.router, prefix="/referral", tags=["Referrals"])
 app.include_router(admin.router, prefix="/admin", tags=["Admin"])
 app.include_router(study_plan.router, prefix="/study-plan", tags=["Study Plan"]) 
 app.include_router(career.router, prefix="/career", tags=["Career"])
-
-# ============================================================
-# HYETUTOR ROUTES
-# ============================================================
-
 app.include_router(hyetutor.router, prefix="/hyetutor", tags=["HyeTutor"])
-
-# ============================================================
-# SOCIAL ROUTES
-# ============================================================
-
-app.include_router(social.router, prefix="/social", tags=["Social"])
-
+app.include_router(social.router, tags=["Social"]) 
 
 if __name__ == "__main__":
     import uvicorn
