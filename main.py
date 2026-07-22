@@ -13,7 +13,7 @@ from routes import (
     auth, user, questions, sessions, mistakes, bookmarks,
     lessons, heatmap, gamification, ai, subscriptions,
     parent, duel, leaderboard, referrals, admin, study_plan, career,
-    hyetutor  # ✅ ADD THIS
+    hyetutor, social  # ✅ ADD social
 )
 
 
@@ -112,7 +112,13 @@ app.include_router(career.router, prefix="/career", tags=["Career"])
 # HYETUTOR ROUTES
 # ============================================================
 
-app.include_router(hyetutor.router, prefix="/hyetutor", tags=["HyeTutor"])  # ✅ ADD THIS
+app.include_router(hyetutor.router, prefix="/hyetutor", tags=["HyeTutor"])
+
+# ============================================================
+# SOCIAL ROUTES
+# ============================================================
+
+app.include_router(social.router, prefix="/social", tags=["Social"])
 
 
 if __name__ == "__main__":
