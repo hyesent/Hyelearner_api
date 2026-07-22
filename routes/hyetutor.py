@@ -33,18 +33,8 @@ async def analyze_hyetutor(
     data = request.get("data", {})
     exam_date = request.get("exam_date")
     
-    # Build prompt and call AI
-    prompt = hyetutor_service.build_ai_prompt(data, exam_date)
-    
-    try:
-        from services.ai import ai_service
-        response_text = await ai_service._generate_gemini(prompt)
-        if not response_text:
-            response_text = await ai_service._generate_groq(prompt, max_tokens=2500)
-        parsed_data = hyetutor_service.parse_ai_response(response_text)
-    except Exception as e:
-        print(f"❌ AI analysis failed: {e}")
-        parsed_data = hyetutor_service._get_fallback_response()
+    # ✅ Use the service method that calls AI properly
+    parsed_data = await hyetutor_service.generate_daily_digest(data, exam_date)
     
     # Add metadata
     parsed_data["success"] = True
@@ -69,11 +59,12 @@ async def analyze_hyetutor(
     )
     db.add(cache)
     
-    # Save missions to DB
+    # ✅ Save missions with mission_code (frontend ID)
     for mission_data in parsed_data.get("missions", []):
         mission = Mission(
             user_id=current_user.id,
             date=date.today(),
+            mission_code=mission_data.get("id"),  # ✅ Store frontend ID
             text=mission_data.get("text", ""),
             reason=mission_data.get("reason", ""),
             priority=mission_data.get("priority", "medium"),
@@ -122,23 +113,25 @@ async def get_cached_hyetutor(
 
 @router.post("/mission/{mission_id}/complete")
 async def complete_mission(
-    mission_id: int,
+    mission_id: str,  # ✅ Changed from int to str to match frontend IDs like "mission_001"
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Mark a mission as complete and award XP."""
     
+    # ✅ Find by mission_code (string ID from frontend)
     mission = db.query(Mission).filter(
-        Mission.id == mission_id,
-        Mission.user_id == current_user.id
+        Mission.user_id == current_user.id,
+        Mission.mission_code == mission_id
     ).first()
     
     if not mission:
-        raise HTTPException(404, "Mission not found")
+        raise HTTPException(404, f"Mission '{mission_id}' not found")
     
     if mission.completed:
         raise HTTPException(400, "Mission already completed")
     
+    # Mark complete
     mission.completed = True
     mission.completed_at = datetime.utcnow()
     
@@ -156,7 +149,7 @@ async def complete_mission(
     return {
         "success": True,
         "mission": {
-            "id": str(mission.id),
+            "id": mission.mission_code,  # ✅ Return the frontend ID
             "completed": True,
             "xp_earned": mission.xp_reward
         },
@@ -253,9 +246,28 @@ Provide a helpful, actionable response. Be concise and supportive.
 
     try:
         from services.ai import ai_service
-        response_text = await ai_service._generate_gemini(prompt)
-        if not response_text:
-            response_text = await ai_service._generate_groq(prompt, max_tokens=800)
+        # ✅ Use proper Gemini call
+        response_text = None
+        if ai_service.gemini:
+            try:
+                response = ai_service.gemini.generate_content(prompt)
+                response_text = response.text
+            except Exception as e:
+                print(f"❌ Gemini chat error: {e}")
+        
+        # ✅ Fallback to Groq
+        if not response_text and ai_service.groq:
+            try:
+                response = ai_service.groq.chat.completions.create(
+                    model=ai_service.groq_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=800,
+                    temperature=0.7
+                )
+                response_text = response.choices[0].message.content
+            except Exception as e:
+                print(f"❌ Groq chat error: {e}")
+                
     except Exception as e:
         response_text = "I'm having trouble connecting. Please try again."
 
