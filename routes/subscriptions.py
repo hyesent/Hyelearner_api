@@ -30,11 +30,19 @@ PREMIUM_DEV_IDS = [1, 2, 3]
 
 @router.post("/init", response_model=SubscriptionInitResponse)
 async def initialize_subscription(
-    data: SubscriptionInit,
+    data: dict,  # ✅ Changed from SubscriptionInit to dict
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Initialize Paystack payment for subscription"""
+    
+    # ✅ Get plan from either 'plan' or 'tier'
+    plan = data.get("plan") or data.get("tier")
+    currency = data.get("currency", "NGN")
+    
+    if not plan:
+        raise HTTPException(status_code=400, detail="plan or tier is required")
+    
     # Check if dev user — bypass payment
     if current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS:
         # Create/update subscription directly
@@ -66,8 +74,8 @@ async def initialize_subscription(
         }
     
     # Validate plan
-    if data.plan not in ["foundation"]:
-        raise HTTPException(status_code=400, detail="Invalid plan. Choose 'foundation'")
+    if plan not in ["foundation", "premium"]:
+        raise HTTPException(status_code=400, detail="Invalid plan. Choose 'foundation' or 'premium'")
     
     # Check if already subscribed
     existing = db.query(Subscription).filter(
@@ -79,13 +87,13 @@ async def initialize_subscription(
         raise HTTPException(status_code=400, detail="You already have an active subscription")
     
     # Initialize Paystack transaction
-    amount = 1500
+    amount = 1500 if plan == "foundation" else 5000
     result = await paystack_service.initialize_transaction(
         email=current_user.email,
         amount=amount,
         metadata={
             "user_id": current_user.id,
-            "plan": data.plan,
+            "plan": plan,
             "source": "hyelearner"
         }
     )
@@ -171,9 +179,6 @@ async def get_subscription_status(
     db: Session = Depends(get_db)
 ):
     """Get current user's subscription status"""
-    # ============================================================
-    # HARDCODE — Check if user is a dev account
-    # ============================================================
     if current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS:
         return {
             "is_active": True,
