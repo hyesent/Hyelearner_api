@@ -28,17 +28,23 @@ PREMIUM_DEV_USERS = [
 PREMIUM_DEV_IDS = [1, 2, 3]
 
 
-@router.post("/init", response_model=SubscriptionInitResponse)
+# ============================================================
+# 1. INITIALIZE SUBSCRIPTION
+# ============================================================
+
+@router.post("/init")
 async def initialize_subscription(
-    data: SubscriptionInit,  # ✅ Use the schema (validates + normalizes)
+    data: SubscriptionInit,  # ✅ Uses schema with field_validator
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Initialize Paystack payment for subscription"""
+    """
+    Initialize Paystack payment for subscription.
+    Returns Paystack URL for payment.
+    """
     
-    # ✅ Get plan from schema (already normalized to lowercase)
+    # Get plan from schema (already normalized to lowercase)
     plan = data.plan
-    currency = "NGN"  # Default currency
     
     if not plan:
         raise HTTPException(status_code=400, detail="plan is required")
@@ -67,10 +73,16 @@ async def initialize_subscription(
         
         db.commit()
         
+        # ✅ Return formatted response
         return {
-            "authorization_url": f"{settings.FRONTEND_URL}/subscriptions/verify?reference=dev_{current_user.id}",
-            "reference": f"dev_{current_user.id}",
-            "access_code": "dev_access"
+            "success": True,
+            "data": {
+                "authorizationUrl": f"{settings.FRONTEND_URL}/subscriptions/verify?reference=dev_{current_user.id}",
+                "reference": f"dev_{current_user.id}",
+                "tier": "foundation",
+                "amount": 1500,
+                "currency": "NGN"
+            }
         }
     
     # Validate plan
@@ -101,19 +113,32 @@ async def initialize_subscription(
     if not result.get("status"):
         raise HTTPException(status_code=400, detail="Payment initialization failed")
     
+    # ✅ Return formatted response
     return {
-        "authorization_url": result["data"]["authorization_url"],
-        "reference": result["data"]["reference"],
-        "access_code": result["data"]["access_code"]
+        "success": True,
+        "data": {
+            "authorizationUrl": result["data"]["authorization_url"],
+            "reference": result["data"]["reference"],
+            "tier": plan,
+            "amount": amount,
+            "currency": "NGN"
+        }
     }
 
 
-@router.get("/verify", response_model=SubscriptionVerifyResponse)
+# ============================================================
+# 2. VERIFY PAYMENT
+# ============================================================
+
+@router.get("/verify")
 async def verify_payment(
     reference: str = Query(...),
     db: Session = Depends(get_db)
 ):
-    """Verify Paystack payment"""
+    """
+    Verify Paystack payment after user returns from Paystack.
+    """
+    
     # Check if dev reference
     if reference.startswith("dev_"):
         user_id = int(reference.split("_")[1])
@@ -123,9 +148,14 @@ async def verify_payment(
         
         if subscription and subscription.is_active:
             return {
-                "status": "success",
-                "plan": "foundation",
-                "message": "Dev subscription active"
+                "success": True,
+                "data": {
+                    "status": "success",
+                    "tier": "foundation",
+                    "amount": 1500,
+                    "reference": reference,
+                    "verifiedAt": datetime.utcnow().isoformat()
+                }
             }
     
     result = await paystack_service.verify_transaction(reference)
@@ -144,6 +174,8 @@ async def verify_payment(
         subscription = db.query(Subscription).filter(
             Subscription.user_id == user_id
         ).first()
+        
+        amount = data.get("amount", 0) / 100  # Convert kobo to NGN
         
         if not subscription:
             subscription = Subscription(
@@ -164,28 +196,49 @@ async def verify_payment(
         
         db.commit()
         
+        # ✅ Return formatted response
         return {
-            "status": "success",
-            "plan": "foundation",
-            "message": "Subscription activated successfully"
+            "success": True,
+            "data": {
+                "status": "success",
+                "tier": "foundation",
+                "amount": amount,
+                "reference": reference,
+                "verifiedAt": datetime.utcnow().isoformat()
+            }
         }
     
     raise HTTPException(status_code=400, detail="Payment not successful")
 
 
-@router.get("/status", response_model=SubscriptionStatusResponse)
+# ============================================================
+# 3. GET SUBSCRIPTION STATUS
+# ============================================================
+
+@router.get("/status")
 async def get_subscription_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get current user's subscription status"""
-    if current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS:
+    """
+    Get current user's subscription status.
+    """
+    
+    # Check hardcoded dev users
+    is_hardcoded = current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS
+    
+    if is_hardcoded:
         return {
-            "is_active": True,
-            "plan": "foundation",
-            "expires_at": datetime.utcnow() + timedelta(days=365),
-            "days_remaining": 365,
-            "auto_renew": True
+            "success": True,
+            "data": {
+                "isActive": True,
+                "tier": "pro",
+                "plan": "Pro",
+                "expiresAt": (datetime.utcnow() + timedelta(days=365)).isoformat(),
+                "daysRemaining": 365,
+                "autoRenew": True,
+                "isHardcoded": True
+            }
         }
     
     subscription = db.query(Subscription).filter(
@@ -194,41 +247,72 @@ async def get_subscription_status(
     
     if not subscription or not subscription.is_active:
         return {
-            "is_active": False,
-            "plan": "free",
-            "expires_at": None,
-            "days_remaining": 0,
-            "auto_renew": False
+            "success": True,
+            "data": {
+                "isActive": False,
+                "tier": "free",
+                "plan": "Free",
+                "expiresAt": None,
+                "daysRemaining": 0,
+                "autoRenew": False,
+                "isHardcoded": False
+            }
         }
     
     if subscription.end_date and subscription.end_date < datetime.utcnow():
         subscription.is_active = False
         db.commit()
         return {
-            "is_active": False,
-            "plan": "free",
-            "expires_at": subscription.end_date,
-            "days_remaining": 0,
-            "auto_renew": False
+            "success": True,
+            "data": {
+                "isActive": False,
+                "tier": "free",
+                "plan": "Free",
+                "expiresAt": subscription.end_date,
+                "daysRemaining": 0,
+                "autoRenew": False,
+                "isHardcoded": False
+            }
         }
     
     days_remaining = (subscription.end_date - datetime.utcnow()).days if subscription.end_date else 0
     
+    # Tier to display name mapping
+    tier_names = {
+        "foundation": "Foundation",
+        "premium": "Premium",
+        "pro": "Pro"
+    }
+    
+    plan_display = tier_names.get(subscription.plan, subscription.plan.capitalize())
+    
     return {
-        "is_active": True,
-        "plan": subscription.plan,
-        "expires_at": subscription.end_date,
-        "days_remaining": max(0, days_remaining),
-        "auto_renew": True
+        "success": True,
+        "data": {
+            "isActive": True,
+            "tier": subscription.plan,
+            "plan": plan_display,
+            "expiresAt": subscription.end_date.isoformat() if subscription.end_date else None,
+            "daysRemaining": max(0, days_remaining),
+            "autoRenew": True,
+            "isHardcoded": False
+        }
     }
 
+
+# ============================================================
+# 4. CANCEL SUBSCRIPTION
+# ============================================================
 
 @router.post("/cancel")
 async def cancel_subscription(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Cancel subscription"""
+    """
+    Cancel active subscription.
+    """
+    
     subscription = db.query(Subscription).filter(
         Subscription.user_id == current_user.id,
         Subscription.is_active == True
@@ -246,17 +330,92 @@ async def cancel_subscription(
     
     return {
         "success": True,
-        "message": "Subscription cancelled successfully",
-        "expires_at": datetime.utcnow().isoformat()
+        "message": "Subscription cancelled.",
+        "data": {
+            "expiresAt": datetime.utcnow().isoformat()
+        }
     }
 
+
+# ============================================================
+# 5. UPGRADE SUBSCRIPTION
+# ============================================================
+
+@router.post("/upgrade")
+async def upgrade_subscription(
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Upgrade subscription to a higher tier.
+    """
+    
+    tier = data.get("tier")
+    
+    if not tier:
+        raise HTTPException(status_code=400, detail="tier is required")
+    
+    if tier not in ["foundation", "premium", "pro"]:
+        raise HTTPException(status_code=400, detail="Invalid tier")
+    
+    # Check if dev user — bypass payment
+    if current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS:
+        subscription = db.query(Subscription).filter(
+            Subscription.user_id == current_user.id
+        ).first()
+        
+        if not subscription:
+            subscription = Subscription(
+                user_id=current_user.id,
+                plan=tier,
+                start_date=datetime.utcnow(),
+                end_date=datetime.utcnow() + timedelta(days=365),
+                is_active=True
+            )
+            db.add(subscription)
+        else:
+            subscription.plan = tier
+            subscription.is_active = True
+            subscription.start_date = datetime.utcnow()
+            subscription.end_date = datetime.utcnow() + timedelta(days=365)
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "data": {
+                "tier": tier,
+                "expiresAt": subscription.end_date.isoformat()
+            }
+        }
+    
+    # For non-dev users, redirect to payment
+    # For now, just return a message
+    return {
+        "success": True,
+        "message": f"Upgrade to {tier} requires payment. Please use /subscriptions/init",
+        "data": {
+            "tier": tier,
+            "requiresPayment": True
+        }
+    }
+
+
+# ============================================================
+# 6. PAYSTACK WEBHOOK
+# ============================================================
 
 @router.post("/webhook")
 async def paystack_webhook(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Paystack webhook endpoint"""
+    """
+    Paystack webhook endpoint.
+    Called by Paystack when payment events occur.
+    """
+    
     signature = request.headers.get("x-paystack-signature")
     if not signature:
         raise HTTPException(status_code=400, detail="Missing signature")
@@ -265,11 +424,59 @@ async def paystack_webhook(
     event = payload.get("event")
     data = payload.get("data")
     
-    if event == "subscription.create":
-        pass
-    elif event == "subscription.disable":
-        pass
-    elif event == "subscription.enable":
-        pass
+    if event == "charge.success":
+        # Process successful payment
+        reference = data.get("reference")
+        amount = data.get("amount", 0) / 100
+        metadata = data.get("metadata", {})
+        user_id = metadata.get("user_id")
+        plan = metadata.get("plan", "foundation")
+        
+        if user_id:
+            subscription = db.query(Subscription).filter(
+                Subscription.user_id == user_id
+            ).first()
+            
+            if not subscription:
+                subscription = Subscription(
+                    user_id=user_id,
+                    plan=plan,
+                    paystack_subscription_code=data.get("subscription_code"),
+                    paystack_customer_code=data.get("customer_code"),
+                    start_date=datetime.utcnow(),
+                    end_date=datetime.utcnow() + timedelta(days=30),
+                    is_active=True
+                )
+                db.add(subscription)
+            else:
+                subscription.plan = plan
+                subscription.is_active = True
+                subscription.start_date = datetime.utcnow()
+                subscription.end_date = datetime.utcnow() + timedelta(days=30)
+            
+            db.commit()
     
-    return {"status": "received"}
+    elif event == "subscription.disable":
+        # Handle subscription cancellation from Paystack
+        subscription_code = data.get("subscription_code")
+        if subscription_code:
+            subscription = db.query(Subscription).filter(
+                Subscription.paystack_subscription_code == subscription_code
+            ).first()
+            if subscription:
+                subscription.is_active = False
+                subscription.end_date = datetime.utcnow()
+                db.commit()
+    
+    elif event == "subscription.enable":
+        # Handle subscription reactivation from Paystack
+        subscription_code = data.get("subscription_code")
+        if subscription_code:
+            subscription = db.query(Subscription).filter(
+                Subscription.paystack_subscription_code == subscription_code
+            ).first()
+            if subscription:
+                subscription.is_active = True
+                db.commit()
+    
+    return {"status": "received", "success": True}
