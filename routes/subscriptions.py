@@ -30,18 +30,18 @@ PREMIUM_DEV_IDS = [1, 2, 3]
 
 @router.post("/init", response_model=SubscriptionInitResponse)
 async def initialize_subscription(
-    data: dict,  # ✅ Changed from SubscriptionInit to dict
+    data: SubscriptionInit,  # ✅ Use the schema (validates + normalizes)
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Initialize Paystack payment for subscription"""
     
-    # ✅ Get plan from either 'plan' or 'tier'
-    plan = data.get("plan") or data.get("tier")
-    currency = data.get("currency", "NGN")
+    # ✅ Get plan from schema (already normalized to lowercase)
+    plan = data.plan
+    currency = "NGN"  # Default currency
     
     if not plan:
-        raise HTTPException(status_code=400, detail="plan or tier is required")
+        raise HTTPException(status_code=400, detail="plan is required")
     
     # Check if dev user — bypass payment
     if current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS:
