@@ -34,24 +34,25 @@ PREMIUM_DEV_IDS = [1, 2, 3]
 
 @router.post("/init")
 async def initialize_subscription(
-    data: SubscriptionInit,  # ✅ Uses schema with field_validator
+    data: dict,  # ✅ Use dict to accept both 'plan' and 'tier'
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Initialize Paystack payment for subscription.
-    Returns Paystack URL for payment.
+    Accepts: plan OR tier (case insensitive)
     """
     
-    # Get plan from schema (already normalized to lowercase)
-    plan = data.plan
+    # ✅ Get plan from either 'plan' or 'tier' and normalize to lowercase
+    plan = data.get("plan") or data.get("tier")
+    plan = plan.lower() if plan else None
+    currency = data.get("currency", "NGN")
     
     if not plan:
-        raise HTTPException(status_code=400, detail="plan is required")
+        raise HTTPException(status_code=400, detail="plan or tier is required")
     
     # Check if dev user — bypass payment
     if current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS:
-        # Create/update subscription directly
         subscription = db.query(Subscription).filter(
             Subscription.user_id == current_user.id
         ).first()
@@ -73,7 +74,6 @@ async def initialize_subscription(
         
         db.commit()
         
-        # ✅ Return formatted response
         return {
             "success": True,
             "data": {
@@ -113,7 +113,6 @@ async def initialize_subscription(
     if not result.get("status"):
         raise HTTPException(status_code=400, detail="Payment initialization failed")
     
-    # ✅ Return formatted response
     return {
         "success": True,
         "data": {
@@ -135,9 +134,7 @@ async def verify_payment(
     reference: str = Query(...),
     db: Session = Depends(get_db)
 ):
-    """
-    Verify Paystack payment after user returns from Paystack.
-    """
+    """Verify Paystack payment after user returns from Paystack."""
     
     # Check if dev reference
     if reference.startswith("dev_"):
@@ -196,7 +193,6 @@ async def verify_payment(
         
         db.commit()
         
-        # ✅ Return formatted response
         return {
             "success": True,
             "data": {
@@ -220,9 +216,7 @@ async def get_subscription_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Get current user's subscription status.
-    """
+    """Get current user's subscription status."""
     
     # Check hardcoded dev users
     is_hardcoded = current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS
@@ -268,7 +262,7 @@ async def get_subscription_status(
                 "isActive": False,
                 "tier": "free",
                 "plan": "Free",
-                "expiresAt": subscription.end_date,
+                "expiresAt": subscription.end_date.isoformat(),
                 "daysRemaining": 0,
                 "autoRenew": False,
                 "isHardcoded": False
@@ -309,9 +303,7 @@ async def cancel_subscription(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Cancel active subscription.
-    """
+    """Cancel active subscription."""
     
     subscription = db.query(Subscription).filter(
         Subscription.user_id == current_user.id,
@@ -347,9 +339,7 @@ async def upgrade_subscription(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Upgrade subscription to a higher tier.
-    """
+    """Upgrade subscription to a higher tier."""
     
     tier = data.get("tier")
     
@@ -391,7 +381,6 @@ async def upgrade_subscription(
         }
     
     # For non-dev users, redirect to payment
-    # For now, just return a message
     return {
         "success": True,
         "message": f"Upgrade to {tier} requires payment. Please use /subscriptions/init",
@@ -411,10 +400,7 @@ async def paystack_webhook(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """
-    Paystack webhook endpoint.
-    Called by Paystack when payment events occur.
-    """
+    """Paystack webhook endpoint."""
     
     signature = request.headers.get("x-paystack-signature")
     if not signature:
@@ -425,7 +411,6 @@ async def paystack_webhook(
     data = payload.get("data")
     
     if event == "charge.success":
-        # Process successful payment
         reference = data.get("reference")
         amount = data.get("amount", 0) / 100
         metadata = data.get("metadata", {})
@@ -457,7 +442,6 @@ async def paystack_webhook(
             db.commit()
     
     elif event == "subscription.disable":
-        # Handle subscription cancellation from Paystack
         subscription_code = data.get("subscription_code")
         if subscription_code:
             subscription = db.query(Subscription).filter(
@@ -469,7 +453,6 @@ async def paystack_webhook(
                 db.commit()
     
     elif event == "subscription.enable":
-        # Handle subscription reactivation from Paystack
         subscription_code = data.get("subscription_code")
         if subscription_code:
             subscription = db.query(Subscription).filter(
