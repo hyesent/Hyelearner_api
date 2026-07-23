@@ -782,9 +782,9 @@ class Contribution(Base):
     course = Column(String(100), nullable=False)
     year = Column(Integer, nullable=False)
     cutoff = Column(Integer, nullable=False)
-    exam_type = Column(String(20), nullable=False)  # jamb, waec, neco, etc.
+    exam_type = Column(String(20), nullable=False)
     source = Column(String(200), nullable=True)
-    status = Column(String(20), default="pending")  # pending, approved, rejected
+    status = Column(String(20), default="pending")
     approved_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_at = Column(DateTime(timezone=True), nullable=True)
     rejected_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -807,4 +807,4 @@ class Contribution(Base):
     )
     
     def __repr__(self):
-        return f"<Contribution id={self.id} university={self.university} course={self.course} status={self.status}">
+        return f"<Contribution id={self.id} university={self.university} course={self.course} status={self.status}>"  # ✅ FIXED
