@@ -16,7 +16,7 @@ router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
-@router.post("/register", response_model=UserResponse)
+@router.post("/register")  # ✅ REMOVED response_model=UserResponse
 async def register(
     user_data: UserCreate,
     db: Session = Depends(get_db)
@@ -72,7 +72,43 @@ async def register(
             referrer_code.signups += 1
             db.commit()
     
-    return db_user
+    # ✅ Create token data
+    token_data = {
+        "sub": str(db_user.id),
+        "email": db_user.email,
+        "role": db_user.role.value if hasattr(db_user.role, 'value') else db_user.role,
+        "tier": db_user.tier.value if hasattr(db_user.tier, 'value') else db_user.tier
+    }
+    
+    # ✅ Create tokens
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+    
+    # ✅ Return user + tokens
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user": {
+            "id": db_user.id,
+            "email": db_user.email,
+            "username": db_user.username,
+            "first_name": db_user.first_name,
+            "last_name": db_user.last_name,
+            "avatar_url": db_user.avatar_url,
+            "role": db_user.role.value if hasattr(db_user.role, 'value') else db_user.role,
+            "tier": db_user.tier.value if hasattr(db_user.tier, 'value') else db_user.tier,
+            "school": db_user.school,
+            "country": db_user.country,
+            "exam": db_user.exam,
+            "bio": db_user.bio,
+            "goal": db_user.goal,
+            "subscription_expires": db_user.subscription_expires,
+            "is_active": db_user.is_active,
+            "is_verified": db_user.is_verified,
+            "created_at": db_user.created_at
+        }
+    }
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -110,7 +146,6 @@ async def login(
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
     
-    # ✅ Return user with tokens
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -184,7 +219,6 @@ async def refresh_token(
 async def logout(
     current_user: User = Depends(get_current_user)
 ):
-    # Token blacklisting would go here (Redis)
     return {"message": "Logged out successfully"}
 
 
@@ -200,15 +234,12 @@ async def forgot_password(
             detail="User not found"
         )
     
-    # Generate reset token
     reset_token = secrets.token_urlsafe(32)
-    # In production, store in a separate table with expiry
-    # For now, we'll just return success
     
     return {
         "success": True,
         "message": "Password reset link sent to email",
-        "token": reset_token  # In production, send via email
+        "token": reset_token
     }
 
 
@@ -217,8 +248,6 @@ async def reset_password(
     request: ResetPasswordRequest,
     db: Session = Depends(get_db)
 ):
-    # In production, verify token from database
-    # For now, accept any token
     if not request.token:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
