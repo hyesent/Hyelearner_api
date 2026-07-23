@@ -1235,3 +1235,88 @@ class ChallengeListResponse(BaseModel):
 class ChallengeStatusResponse(BaseModel):
     success: bool = True
     data: Dict[str, Any]
+
+
+# ============================================================
+# FEEDBACK & CONTRIBUTIONS SCHEMAS
+# ============================================================
+
+# ============================================================
+# FEEDBACK SCHEMAS
+# ============================================================
+
+class FeedbackCreate(BaseModel):
+    type: str = "general"  # general, bug, feature, improvement
+    message: str = Field(..., min_length=1)
+    rating: Optional[int] = Field(None, ge=1, le=5)
+    email: Optional[str] = None
+
+
+class FeedbackResponse(BaseModel):
+    id: int
+    type: str
+    message: str
+    rating: Optional[int]
+    email: Optional[str]
+    user_id: Optional[int]
+    user: Optional[Dict[str, Any]]
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FeedbackListResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+# ============================================================
+# CONTRIBUTION SCHEMAS
+# ============================================================
+
+class ContributionCreate(BaseModel):
+    university: str = Field(..., min_length=1)
+    course: str = Field(..., min_length=1)
+    year: int = Field(..., ge=2000, le=datetime.now().year + 1)
+    cutoff: int = Field(..., ge=0, le=400)
+    exam_type: str = Field(..., min_length=1)  # jamb, waec, neco, etc.
+    source: Optional[str] = None
+
+
+class ContributionResponse(BaseModel):
+    id: int
+    university: str
+    course: str
+    year: int
+    cutoff: int
+    exam_type: str
+    source: Optional[str]
+    status: str  # pending, approved, rejected
+    user_id: int
+    user: Optional[Dict[str, Any]]
+    created_at: datetime
+    approved_at: Optional[datetime]
+    approved_by: Optional[int]
+    rejected_at: Optional[datetime]
+    rejection_reason: Optional[str]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ContributionListResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+class ContributionApproveResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
+
+
+class ContributionRejectRequest(BaseModel):
+    reason: str = Field(..., min_length=1)
+
+
+class MyContributionsResponse(BaseModel):
+    success: bool = True
+    data: Dict[str, Any]
