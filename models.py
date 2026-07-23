@@ -326,9 +326,12 @@ class ParentLink(Base):
     parent_id = Column(Integer, ForeignKey("users.id"))
     child_id = Column(Integer, ForeignKey("users.id"))
     code = Column(String, unique=True, index=True, nullable=False)
+    status = Column(String(20), default="pending")  
+    expires_at = Column(DateTime(timezone=True), nullable=True)  
     is_approved = Column(Boolean, default=False)
     approved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())  
 
     parent = relationship("User", foreign_keys=[parent_id])
     child = relationship("User", foreign_keys=[child_id])
