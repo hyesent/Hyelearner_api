@@ -112,10 +112,10 @@ class User(Base):
     challenge_participants = relationship("ChallengeParticipant", back_populates="user")
 
     # ============================================================
-    # FEEDBACK & CONTRIBUTIONS RELATIONSHIPS
+    # FEEDBACK & CONTRIBUTIONS RELATIONSHIPS (FIXED)
     # ============================================================
-    feedback = relationship("Feedback", back_populates="user", cascade="all, delete-orphan")
-    contributions = relationship("Contribution", back_populates="user", cascade="all, delete-orphan")
+    feedback = relationship("Feedback", foreign_keys="Feedback.user_id", back_populates="user", cascade="all, delete-orphan")
+    contributions = relationship("Contribution", foreign_keys="Contribution.user_id", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserSettings(Base):
@@ -807,4 +807,4 @@ class Contribution(Base):
     )
     
     def __repr__(self):
-        return f"<Contribution id={self.id} university={self.university} course={self.course} status={self.status}>"
+        return f"<Contribution id={self.id} university={self.university} course={self.course} status={self.status}">
