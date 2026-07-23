@@ -13,7 +13,7 @@ from routes import (
     auth, user, questions, sessions, mistakes, bookmarks,
     lessons, heatmap, gamification, ai, subscriptions,
     parent, duel, leaderboard, referrals, admin, study_plan, career,
-    hyetutor, social  # ✅ ADD social
+    hyetutor, social, feedback  
 )
 
 
@@ -109,6 +109,8 @@ app.include_router(study_plan.router, prefix="/study-plan", tags=["Study Plan"])
 app.include_router(career.router, prefix="/career", tags=["Career"])
 app.include_router(hyetutor.router, prefix="/hyetutor", tags=["HyeTutor"])
 app.include_router(social.router, tags=["Social"]) 
+app.include_router(feedback.router, tags=["Feedback", "Contributions"])
+
 
 if __name__ == "__main__":
     import uvicorn
