@@ -34,7 +34,7 @@ PREMIUM_DEV_IDS = [1, 2, 3]
 
 @router.post("/init")
 async def initialize_subscription(
-    data: dict,  # ✅ Use dict to accept both 'plan' and 'tier'
+    data: dict,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -43,7 +43,7 @@ async def initialize_subscription(
     Accepts: plan OR tier (case insensitive)
     """
     
-    # ✅ Get plan from either 'plan' or 'tier' and normalize to lowercase
+    # Get plan from either 'plan' or 'tier' and normalize to lowercase
     plan = data.get("plan") or data.get("tier")
     plan = plan.lower() if plan else None
     currency = data.get("currency", "NGN")
@@ -74,15 +74,10 @@ async def initialize_subscription(
         
         db.commit()
         
+        # ✅ DEV USER — Return mock URL
         return {
-            "success": True,
-            "data": {
-                "authorizationUrl": f"{settings.FRONTEND_URL}/subscriptions/verify?reference=dev_{current_user.id}",
-                "reference": f"dev_{current_user.id}",
-                "tier": "foundation",
-                "amount": 1500,
-                "currency": "NGN"
-            }
+            "authorizationUrl": f"{settings.FRONTEND_URL}/subscriptions/verify?reference=dev_{current_user.id}",
+            "reference": f"dev_{current_user.id}"
         }
     
     # Validate plan
@@ -100,29 +95,36 @@ async def initialize_subscription(
     
     # Initialize Paystack transaction
     amount = 1500 if plan == "foundation" else 5000
-    result = await paystack_service.initialize_transaction(
-        email=current_user.email,
-        amount=amount,
-        metadata={
-            "user_id": current_user.id,
-            "plan": plan,
-            "source": "hyelearner"
-        }
-    )
     
-    if not result.get("status"):
-        raise HTTPException(status_code=400, detail="Payment initialization failed")
-    
-    return {
-        "success": True,
-        "data": {
+    try:
+        result = await paystack_service.initialize_transaction(
+            email=current_user.email,
+            amount=amount,
+            metadata={
+                "user_id": current_user.id,
+                "plan": plan,
+                "source": "hyelearner"
+            }
+        )
+        
+        print(f"🔍 Paystack response: {result}")
+        
+        if not result or not result.get("status"):
+            error_msg = result.get("message", "Payment initialization failed") if result else "No response from Paystack"
+            print(f"❌ Paystack error: {error_msg}")
+            raise HTTPException(status_code=400, detail=error_msg)
+        
+        # ✅ SUCCESS — Return ONLY what frontend expects
+        return {
             "authorizationUrl": result["data"]["authorization_url"],
-            "reference": result["data"]["reference"],
-            "tier": plan,
-            "amount": amount,
-            "currency": "NGN"
+            "reference": result["data"]["reference"]
         }
-    }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Paystack exception: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Payment initialization failed: {str(e)}")
 
 
 # ============================================================
@@ -155,56 +157,63 @@ async def verify_payment(
                 }
             }
     
-    result = await paystack_service.verify_transaction(reference)
-    
-    if not result.get("status"):
-        raise HTTPException(status_code=400, detail="Verification failed")
-    
-    data = result["data"]
-    metadata = data.get("metadata", {})
-    user_id = metadata.get("user_id")
-    
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in transaction")
-    
-    if data["status"] == "success":
-        subscription = db.query(Subscription).filter(
-            Subscription.user_id == user_id
-        ).first()
+    try:
+        result = await paystack_service.verify_transaction(reference)
         
-        amount = data.get("amount", 0) / 100  # Convert kobo to NGN
+        if not result.get("status"):
+            raise HTTPException(status_code=400, detail="Verification failed")
         
-        if not subscription:
-            subscription = Subscription(
-                user_id=user_id,
-                plan="foundation",
-                paystack_subscription_code=data.get("subscription_code"),
-                paystack_customer_code=data.get("customer_code"),
-                start_date=datetime.utcnow(),
-                end_date=datetime.utcnow() + timedelta(days=30),
-                is_active=True
-            )
-            db.add(subscription)
-        else:
-            subscription.plan = "foundation"
-            subscription.is_active = True
-            subscription.start_date = datetime.utcnow()
-            subscription.end_date = datetime.utcnow() + timedelta(days=30)
+        data = result["data"]
+        metadata = data.get("metadata", {})
+        user_id = metadata.get("user_id")
         
-        db.commit()
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in transaction")
         
-        return {
-            "success": True,
-            "data": {
-                "status": "success",
-                "tier": "foundation",
-                "amount": amount,
-                "reference": reference,
-                "verifiedAt": datetime.utcnow().isoformat()
+        if data["status"] == "success":
+            subscription = db.query(Subscription).filter(
+                Subscription.user_id == user_id
+            ).first()
+            
+            amount = data.get("amount", 0) / 100  # Convert kobo to NGN
+            
+            if not subscription:
+                subscription = Subscription(
+                    user_id=user_id,
+                    plan="foundation",
+                    paystack_subscription_code=data.get("subscription_code"),
+                    paystack_customer_code=data.get("customer_code"),
+                    start_date=datetime.utcnow(),
+                    end_date=datetime.utcnow() + timedelta(days=30),
+                    is_active=True
+                )
+                db.add(subscription)
+            else:
+                subscription.plan = "foundation"
+                subscription.is_active = True
+                subscription.start_date = datetime.utcnow()
+                subscription.end_date = datetime.utcnow() + timedelta(days=30)
+            
+            db.commit()
+            
+            return {
+                "success": True,
+                "data": {
+                    "status": "success",
+                    "tier": "foundation",
+                    "amount": amount,
+                    "reference": reference,
+                    "verifiedAt": datetime.utcnow().isoformat()
+                }
             }
-        }
-    
-    raise HTTPException(status_code=400, detail="Payment not successful")
+        
+        raise HTTPException(status_code=400, detail="Payment not successful")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Verification error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Verification failed: {str(e)}")
 
 
 # ============================================================
