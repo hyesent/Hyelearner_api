@@ -320,11 +320,14 @@ class MasteryUpdate(BaseModel):
 # ============================================================
 
 class SubscriptionInit(BaseModel):
-    plan: str  # "foundation", "campus", "pro", etc.
+    plan: Optional[str] = None
+    tier: Optional[str] = None
+    currency: str = "NGN"
     
-    @field_validator('plan')
+    @field_validator('plan', 'tier')
+    @classmethod
     def normalize_plan(cls, v):
-        return v.lower()  # ✅ Force lowercase to match enum
+        return v.lower() if v else None
 
 class SubscriptionInitResponse(BaseModel):
     authorization_url: str
