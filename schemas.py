@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -321,6 +321,10 @@ class MasteryUpdate(BaseModel):
 
 class SubscriptionInit(BaseModel):
     plan: str  # "foundation", "campus", "pro", etc.
+    
+    @field_validator('plan')
+    def normalize_plan(cls, v):
+        return v.lower()  # ✅ Force lowercase to match enum
 
 class SubscriptionInitResponse(BaseModel):
     authorization_url: str
