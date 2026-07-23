@@ -111,6 +111,12 @@ class User(Base):
     challenges_created = relationship("Challenge", back_populates="creator")
     challenge_participants = relationship("ChallengeParticipant", back_populates="user")
 
+    # ============================================================
+    # FEEDBACK & CONTRIBUTIONS RELATIONSHIPS
+    # ============================================================
+    feedback = relationship("Feedback", back_populates="user", cascade="all, delete-orphan")
+    contributions = relationship("Contribution", back_populates="user", cascade="all, delete-orphan")
+
 
 class UserSettings(Base):
     __tablename__ = "user_settings"
@@ -737,3 +743,68 @@ class Activity(Base):
     
     def __repr__(self):
         return f"<Activity user={self.user_id} type={self.type}>"
+
+
+# ============================================================
+# FEEDBACK & CONTRIBUTIONS TABLES
+# ============================================================
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    type = Column(String(20), default="general")  # general, bug, feature, improvement
+    message = Column(Text, nullable=False)
+    rating = Column(Integer, nullable=True)  # 1-5
+    email = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id], back_populates="feedback")
+    
+    __table_args__ = (
+        Index('idx_feedback_user', 'user_id'),
+        Index('idx_feedback_type', 'type'),
+        Index('idx_feedback_created', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<Feedback id={self.id} type={self.type} user={self.user_id}>"
+
+
+class Contribution(Base):
+    __tablename__ = "contributions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    university = Column(String(100), nullable=False)
+    course = Column(String(100), nullable=False)
+    year = Column(Integer, nullable=False)
+    cutoff = Column(Integer, nullable=False)
+    exam_type = Column(String(20), nullable=False)  # jamb, waec, neco, etc.
+    source = Column(String(200), nullable=True)
+    status = Column(String(20), default="pending")  # pending, approved, rejected
+    approved_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    rejected_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    rejected_at = Column(DateTime(timezone=True), nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id], back_populates="contributions")
+    approver = relationship("User", foreign_keys=[approved_by])
+    rejecter = relationship("User", foreign_keys=[rejected_by])
+    
+    __table_args__ = (
+        Index('idx_contribution_user', 'user_id'),
+        Index('idx_contribution_status', 'status'),
+        Index('idx_contribution_university', 'university'),
+        Index('idx_contribution_exam_type', 'exam_type'),
+        Index('idx_contribution_created', 'created_at'),
+    )
+    
+    def __repr__(self):
+        return f"<Contribution id={self.id} university={self.university} course={self.course} status={self.status}>"
