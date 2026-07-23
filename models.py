@@ -26,7 +26,7 @@ class UserTier(str, enum.Enum):
 class SubscriptionPlan(str, enum.Enum):
     FREE = "free"
     PREMIUM = "premium"
-
+  FOUNDATION = "foundation"
 class Difficulty(str, enum.Enum):
     EASY = "easy"
     MEDIUM = "medium"
