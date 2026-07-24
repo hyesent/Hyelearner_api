@@ -26,6 +26,7 @@ router = APIRouter(prefix="/social", tags=["Social"])
 # ============================================================
 # 1. USER SEARCH
 # ============================================================
+# routes/social.py — search_users endpoint
 
 @router.get("/users/search")
 async def search_users(
@@ -55,6 +56,11 @@ async def search_users(
     ).all()]
     
     for user in users:
+        # ✅ FIXED: Timezone-aware comparison
+        is_online = False
+        if user.last_login:
+            is_online = (datetime.now(timezone.utc) - user.last_login).seconds < 300
+
         result.append({
             "id": user.id,
             "username": user.username,
@@ -69,7 +75,7 @@ async def search_users(
             "accuracy": user.stats.accuracy if user.stats else 0,
             "isFriend": user.id in friend_ids,
             "friendRequestSent": user.id in request_ids,
-            "isOnline": user.last_login and (datetime.utcnow() - user.last_login).seconds < 300
+            "isOnline": is_online
         })
     
     return {
@@ -79,7 +85,9 @@ async def search_users(
             "total": len(result),
             "limit": limit
         }
-    }
+}
+
+   
 
 
 # ============================================================
