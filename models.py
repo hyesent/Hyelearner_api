@@ -118,6 +118,11 @@ class User(Base):
     feedback = relationship("Feedback", foreign_keys="Feedback.user_id", back_populates="user", cascade="all, delete-orphan")
     contributions = relationship("Contribution", foreign_keys="Contribution.user_id", back_populates="user", cascade="all, delete-orphan")
 
+    # ============================================================
+    # DAILY STATS RELATIONSHIP
+    # ============================================================
+    daily_stats = relationship("UserDailyStats", back_populates="user", cascade="all, delete-orphan")
+
 
 class UserSettings(Base):
     __tablename__ = "user_settings"
@@ -808,4 +813,38 @@ class Contribution(Base):
     )
     
     def __repr__(self):
-        return f"<Contribution id={self.id} university={self.university} course={self.course} status={self.status}>"  # ✅ FIXED
+        return f"<Contribution id={self.id} university={self.university} course={self.course} status={self.status}>"
+
+
+# ============================================================
+# USER DAILY STATS TABLE
+# ============================================================
+
+class UserDailyStats(Base):
+    __tablename__ = "user_daily_stats"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    date = Column(Date, nullable=False)
+    xp = Column(Integer, default=0)
+    level = Column(Integer, default=1)
+    streak = Column(Integer, default=0)
+    accuracy = Column(Float, default=0.0)
+    sessions = Column(Integer, default=0)
+    total_questions = Column(Integer, default=0)
+    correct = Column(Integer, default=0)
+    wrong = Column(Integer, default=0)
+    study_time_minutes = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    user = relationship("User", back_populates="daily_stats")
+    
+    __table_args__ = (
+        Index('idx_user_daily_stats_user_date', 'user_id', 'date'),
+        Index('idx_user_daily_stats_date', 'date'),
+    )
+    
+    def __repr__(self):
+        return f"<UserDailyStats user={self.user_id} date={self.date} xp={self.xp}>"
