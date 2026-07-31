@@ -12,6 +12,7 @@ from schemas import (
 )
 from dependencies import get_current_user
 from services.paystack import paystack_service
+from services.hyescriptures import hyescriptures_service
 from config import settings
 
 router = APIRouter()
@@ -27,9 +28,22 @@ PREMIUM_DEV_USERS = [
 
 PREMIUM_DEV_IDS = [1, 2, 3]
 
+# ============================================================
+# HYESCRIPTURES PLANS
+# ============================================================
+HYESCRIPTURES_PLANS = {
+    "PLN_kyfqnoiu4y4skzs": {"tier": "pro", "name": "Hyescriptures Pro", "amount": 750000},
+    "PLN_9w4qnqs44shhxvv": {"tier": "elder", "name": "Hyescriptures Elder", "amount": 3000000},
+}
+
+HYESCRIPTURES_PLAN_NAMES = {
+    "pro": "PLN_kyfqnoiu4y4skzs",
+    "elder": "PLN_9w4qnqs44shhxvv",
+}
+
 
 # ============================================================
-# 1. INITIALIZE SUBSCRIPTION
+# 1. HYELEARNER SUBSCRIPTION INIT
 # ============================================================
 
 @router.post("/init")
@@ -39,11 +53,10 @@ async def initialize_subscription(
     db: Session = Depends(get_db)
 ):
     """
-    Initialize Paystack payment for subscription.
+    Initialize Paystack payment for Hyelearner subscription.
     Accepts: plan OR tier (case insensitive)
     """
     
-    # Get plan from either 'plan' or 'tier' and normalize to lowercase
     plan = data.get("plan") or data.get("tier")
     plan = plan.lower() if plan else None
     currency = data.get("currency", "NGN")
@@ -74,7 +87,6 @@ async def initialize_subscription(
         
         db.commit()
         
-        # ✅ DEV USER — Return mock URL
         return {
             "authorizationUrl": f"{settings.FRONTEND_URL}/subscriptions/verify?reference=dev_{current_user.id}",
             "reference": f"dev_{current_user.id}"
@@ -107,14 +119,10 @@ async def initialize_subscription(
             }
         )
         
-        print(f"🔍 Paystack response: {result}")
-        
         if not result or not result.get("status"):
             error_msg = result.get("message", "Payment initialization failed") if result else "No response from Paystack"
-            print(f"❌ Paystack error: {error_msg}")
             raise HTTPException(status_code=400, detail=error_msg)
         
-        # ✅ SUCCESS — Return ONLY what frontend expects
         return {
             "authorizationUrl": result["data"]["authorization_url"],
             "reference": result["data"]["reference"]
@@ -123,12 +131,66 @@ async def initialize_subscription(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Paystack exception: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Payment initialization failed: {str(e)}")
 
 
 # ============================================================
-# 2. VERIFY PAYMENT
+# 2. HYESCRIPTURES SUBSCRIPTION INIT
+# ============================================================
+
+@router.post("/hyescriptures/init")
+async def init_hyescriptures_subscription(
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Initialize Paystack payment for Hyescriptures subscription.
+    """
+    
+    plan = data.get("plan", "pro").lower()
+    email = data.get("email")
+    
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required")
+    
+    if plan not in ["pro", "elder"]:
+        raise HTTPException(status_code=400, detail="Invalid plan. Choose 'pro' or 'elder'")
+    
+    plan_code = HYESCRIPTURES_PLAN_NAMES.get(plan)
+    plan_config = HYESCRIPTURES_PLANS.get(plan_code)
+    
+    if not plan_config:
+        raise HTTPException(status_code=400, detail="Plan configuration not found")
+    
+    try:
+        result = await paystack_service.initialize_transaction(
+            email=email,
+            amount=plan_config["amount"],
+            plan=plan_code,
+            metadata={
+                "plan": plan,
+                "source": "hyescriptures",
+                "email": email
+            }
+        )
+        
+        if not result or not result.get("status"):
+            error_msg = result.get("message", "Payment initialization failed") if result else "No response from Paystack"
+            raise HTTPException(status_code=400, detail=error_msg)
+        
+        return {
+            "authorizationUrl": result["data"]["authorization_url"],
+            "reference": result["data"]["reference"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Payment initialization failed: {str(e)}")
+
+
+# ============================================================
+# 3. VERIFY PAYMENT
 # ============================================================
 
 @router.get("/verify")
@@ -136,7 +198,7 @@ async def verify_payment(
     reference: str = Query(...),
     db: Session = Depends(get_db)
 ):
-    """Verify Paystack payment after user returns from Paystack."""
+    """Verify Paystack payment"""
     
     # Check if dev reference
     if reference.startswith("dev_"):
@@ -157,67 +219,60 @@ async def verify_payment(
                 }
             }
     
-    try:
-        result = await paystack_service.verify_transaction(reference)
+    result = await paystack_service.verify_transaction(reference)
+    
+    if not result.get("status"):
+        raise HTTPException(status_code=400, detail="Verification failed")
+    
+    data = result["data"]
+    metadata = data.get("metadata", {})
+    user_id = metadata.get("user_id")
+    
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID not found in transaction")
+    
+    if data["status"] == "success":
+        subscription = db.query(Subscription).filter(
+            Subscription.user_id == user_id
+        ).first()
         
-        if not result.get("status"):
-            raise HTTPException(status_code=400, detail="Verification failed")
+        amount = data.get("amount", 0) / 100
         
-        data = result["data"]
-        metadata = data.get("metadata", {})
-        user_id = metadata.get("user_id")
+        if not subscription:
+            subscription = Subscription(
+                user_id=user_id,
+                plan="foundation",
+                paystack_subscription_code=data.get("subscription_code"),
+                paystack_customer_code=data.get("customer_code"),
+                start_date=datetime.utcnow(),
+                end_date=datetime.utcnow() + timedelta(days=30),
+                is_active=True
+            )
+            db.add(subscription)
+        else:
+            subscription.plan = "foundation"
+            subscription.is_active = True
+            subscription.start_date = datetime.utcnow()
+            subscription.end_date = datetime.utcnow() + timedelta(days=30)
         
-        if not user_id:
-            raise HTTPException(status_code=400, detail="User ID not found in transaction")
+        db.commit()
         
-        if data["status"] == "success":
-            subscription = db.query(Subscription).filter(
-                Subscription.user_id == user_id
-            ).first()
-            
-            amount = data.get("amount", 0) / 100  # Convert kobo to NGN
-            
-            if not subscription:
-                subscription = Subscription(
-                    user_id=user_id,
-                    plan="foundation",
-                    paystack_subscription_code=data.get("subscription_code"),
-                    paystack_customer_code=data.get("customer_code"),
-                    start_date=datetime.utcnow(),
-                    end_date=datetime.utcnow() + timedelta(days=30),
-                    is_active=True
-                )
-                db.add(subscription)
-            else:
-                subscription.plan = "foundation"
-                subscription.is_active = True
-                subscription.start_date = datetime.utcnow()
-                subscription.end_date = datetime.utcnow() + timedelta(days=30)
-            
-            db.commit()
-            
-            return {
-                "success": True,
-                "data": {
-                    "status": "success",
-                    "tier": "foundation",
-                    "amount": amount,
-                    "reference": reference,
-                    "verifiedAt": datetime.utcnow().isoformat()
-                }
+        return {
+            "success": True,
+            "data": {
+                "status": "success",
+                "tier": "foundation",
+                "amount": amount,
+                "reference": reference,
+                "verifiedAt": datetime.utcnow().isoformat()
             }
-        
-        raise HTTPException(status_code=400, detail="Payment not successful")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Verification error: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Verification failed: {str(e)}")
+        }
+    
+    raise HTTPException(status_code=400, detail="Payment not successful")
 
 
 # ============================================================
-# 3. GET SUBSCRIPTION STATUS
+# 4. GET SUBSCRIPTION STATUS
 # ============================================================
 
 @router.get("/status")
@@ -227,7 +282,6 @@ async def get_subscription_status(
 ):
     """Get current user's subscription status."""
     
-    # Check hardcoded dev users
     is_hardcoded = current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS
     
     if is_hardcoded:
@@ -280,7 +334,6 @@ async def get_subscription_status(
     
     days_remaining = (subscription.end_date - datetime.utcnow()).days if subscription.end_date else 0
     
-    # Tier to display name mapping
     tier_names = {
         "foundation": "Foundation",
         "premium": "Premium",
@@ -304,104 +357,7 @@ async def get_subscription_status(
 
 
 # ============================================================
-# 4. CANCEL SUBSCRIPTION
-# ============================================================
-
-@router.post("/cancel")
-async def cancel_subscription(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Cancel active subscription."""
-    
-    subscription = db.query(Subscription).filter(
-        Subscription.user_id == current_user.id,
-        Subscription.is_active == True
-    ).first()
-    
-    if not subscription:
-        raise HTTPException(status_code=404, detail="No active subscription found")
-    
-    if subscription.paystack_subscription_code:
-        await paystack_service.cancel_subscription(subscription.paystack_subscription_code)
-    
-    subscription.is_active = False
-    subscription.end_date = datetime.utcnow()
-    db.commit()
-    
-    return {
-        "success": True,
-        "message": "Subscription cancelled.",
-        "data": {
-            "expiresAt": datetime.utcnow().isoformat()
-        }
-    }
-
-
-# ============================================================
-# 5. UPGRADE SUBSCRIPTION
-# ============================================================
-
-@router.post("/upgrade")
-async def upgrade_subscription(
-    data: dict,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Upgrade subscription to a higher tier."""
-    
-    tier = data.get("tier")
-    
-    if not tier:
-        raise HTTPException(status_code=400, detail="tier is required")
-    
-    if tier not in ["foundation", "premium", "pro"]:
-        raise HTTPException(status_code=400, detail="Invalid tier")
-    
-    # Check if dev user — bypass payment
-    if current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS:
-        subscription = db.query(Subscription).filter(
-            Subscription.user_id == current_user.id
-        ).first()
-        
-        if not subscription:
-            subscription = Subscription(
-                user_id=current_user.id,
-                plan=tier,
-                start_date=datetime.utcnow(),
-                end_date=datetime.utcnow() + timedelta(days=365),
-                is_active=True
-            )
-            db.add(subscription)
-        else:
-            subscription.plan = tier
-            subscription.is_active = True
-            subscription.start_date = datetime.utcnow()
-            subscription.end_date = datetime.utcnow() + timedelta(days=365)
-        
-        db.commit()
-        
-        return {
-            "success": True,
-            "data": {
-                "tier": tier,
-                "expiresAt": subscription.end_date.isoformat()
-            }
-        }
-    
-    # For non-dev users, redirect to payment
-    return {
-        "success": True,
-        "message": f"Upgrade to {tier} requires payment. Please use /subscriptions/init",
-        "data": {
-            "tier": tier,
-            "requiresPayment": True
-        }
-    }
-
-
-# ============================================================
-# 6. PAYSTACK WEBHOOK
+# 5. WEBHOOK — Handles BOTH Hyelearner AND Hyescriptures
 # ============================================================
 
 @router.post("/webhook")
@@ -409,7 +365,7 @@ async def paystack_webhook(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Paystack webhook endpoint."""
+    """Paystack webhook endpoint — Handles both Hyelearner and Hyescriptures."""
     
     signature = request.headers.get("x-paystack-signature")
     if not signature:
@@ -420,9 +376,41 @@ async def paystack_webhook(
     data = payload.get("data")
     
     if event == "charge.success":
+        metadata = data.get("metadata", {})
+        plan_code = data.get("plan", {}).get("plan_code") if isinstance(data.get("plan"), dict) else data.get("plan")
+        source = metadata.get("source", "hyelearner")
+        
+        # ===== HYESCRIPTURES =====
+        if source == "hyescriptures" or plan_code in HYESCRIPTURES_PLANS:
+            email = data.get("customer", {}).get("email") or metadata.get("email")
+            plan_info = HYESCRIPTURES_PLANS.get(plan_code, {"tier": "pro"})
+            
+            # ✅ Update Hyescriptures Supabase
+            result = await hyescriptures_service.update_subscription(email, plan_info["tier"])
+            
+            if result.get("success"):
+                print(f"✅ Hyescriptures: {email} → {plan_info['tier']}")
+            else:
+                print(f"❌ Hyescriptures update failed: {result.get('error')}")
+            
+            # Also store in main DB for reference
+            subscription = Subscription(
+                user_id=metadata.get("user_id") or 0,
+                plan=f"hyescriptures_{plan_info['tier']}",
+                paystack_subscription_code=data.get("subscription_code"),
+                paystack_customer_code=data.get("customer_code"),
+                start_date=datetime.utcnow(),
+                end_date=datetime.utcnow() + timedelta(days=30),
+                is_active=True
+            )
+            db.add(subscription)
+            db.commit()
+            
+            return {"status": "received", "success": True, "app": "hyescriptures"}
+        
+        # ===== HYELEARNER =====
         reference = data.get("reference")
         amount = data.get("amount", 0) / 100
-        metadata = data.get("metadata", {})
         user_id = metadata.get("user_id")
         plan = metadata.get("plan", "foundation")
         
@@ -472,3 +460,169 @@ async def paystack_webhook(
                 db.commit()
     
     return {"status": "received", "success": True}
+
+
+# ============================================================
+# 6. CANCEL SUBSCRIPTION
+# ============================================================
+
+@router.post("/cancel")
+async def cancel_subscription(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Cancel active subscription."""
+    
+    subscription = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id,
+        Subscription.is_active == True
+    ).first()
+    
+    if not subscription:
+        raise HTTPException(status_code=404, detail="No active subscription found")
+    
+    if subscription.paystack_subscription_code:
+        await paystack_service.cancel_subscription(subscription.paystack_subscription_code)
+    
+    subscription.is_active = False
+    subscription.end_date = datetime.utcnow()
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": "Subscription cancelled.",
+        "data": {
+            "expiresAt": datetime.utcnow().isoformat()
+        }
+    }
+
+
+# ============================================================
+# 7. HYELEARNER SUBSCRIPTION STATUS
+# ============================================================
+
+@router.get("/status/hyelearner")
+async def get_hyelearner_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get Hyelearner subscription status specifically."""
+    return await get_subscription_status(current_user, db)
+
+
+# ============================================================
+# 8. HYESCRIPTURES SUBSCRIPTION STATUS
+# ============================================================
+
+@router.get("/hyescriptures/status")
+async def get_hyescriptures_status(
+    email: str = Query(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Get Hyescriptures subscription status from its own Supabase.
+    """
+    
+    if not hyescriptures_service.is_configured():
+        # Fallback to main DB if Hyescriptures not configured
+        subscription = db.query(Subscription).filter(
+            Subscription.plan.ilike(f"hyescriptures_%"),
+            Subscription.is_active == True
+        ).first()
+        
+        if not subscription:
+            return {
+                "success": True,
+                "data": {
+                    "active": False,
+                    "plan": None,
+                    "expiresAt": None,
+                    "daysRemaining": 0
+                }
+            }
+        
+        days_remaining = (subscription.end_date - datetime.utcnow()).days if subscription.end_date else 0
+        plan_tier = subscription.plan.replace("hyescriptures_", "")
+        
+        return {
+            "success": True,
+            "data": {
+                "active": True,
+                "plan": plan_tier,
+                "expiresAt": subscription.end_date.isoformat() if subscription.end_date else None,
+                "daysRemaining": max(0, days_remaining)
+            }
+        }
+    
+    # Get from Hyescriptures Supabase
+    status = await hyescriptures_service.get_subscription_status(email)
+    
+    return {
+        "success": True,
+        "data": {
+            "active": status.get("active", False),
+            "plan": status.get("plan"),
+            "expiresAt": status.get("expiresAt"),
+            "daysRemaining": status.get("daysRemaining", 0)
+        }
+    }
+
+
+# ============================================================
+# 9. UPGRADE SUBSCRIPTION
+# ============================================================
+
+@router.post("/upgrade")
+async def upgrade_subscription(
+    data: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upgrade subscription to a higher tier."""
+    
+    tier = data.get("tier")
+    
+    if not tier:
+        raise HTTPException(status_code=400, detail="tier is required")
+    
+    if tier not in ["foundation", "premium", "pro"]:
+        raise HTTPException(status_code=400, detail="Invalid tier")
+    
+    if current_user.email in PREMIUM_DEV_USERS or current_user.id in PREMIUM_DEV_IDS:
+        subscription = db.query(Subscription).filter(
+            Subscription.user_id == current_user.id
+        ).first()
+        
+        if not subscription:
+            subscription = Subscription(
+                user_id=current_user.id,
+                plan=tier,
+                start_date=datetime.utcnow(),
+                end_date=datetime.utcnow() + timedelta(days=365),
+                is_active=True
+            )
+            db.add(subscription)
+        else:
+            subscription.plan = tier
+            subscription.is_active = True
+            subscription.start_date = datetime.utcnow()
+            subscription.end_date = datetime.utcnow() + timedelta(days=365)
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "data": {
+                "tier": tier,
+                "expiresAt": subscription.end_date.isoformat()
+            }
+        }
+    
+    return {
+        "success": True,
+        "message": f"Upgrade to {tier} requires payment. Please use /subscriptions/init",
+        "data": {
+            "tier": tier,
+            "requiresPayment": True
+        }
+    }
