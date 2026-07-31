@@ -1327,3 +1327,80 @@ class ContributionRejectRequest(BaseModel):
 class MyContributionsResponse(BaseModel):
     success: bool = True
     data: Dict[str, Any]
+
+
+# ============================================================
+# USER STATS SCHEMAS
+# ============================================================
+
+class UserStatsResponse(BaseModel):
+    """Response for GET /user/stats"""
+    date: str
+    xp: int
+    level: int
+    streak: int
+    accuracy: float
+    sessions: int
+    totalQuestions: int
+    correct: int
+    wrong: int
+    studyTime: int
+    fromCache: bool = False
+    cachedAt: Optional[str] = None
+
+
+class UserStatsUpdate(BaseModel):
+    """Request for POST /user/stats"""
+    xp: Optional[int] = None
+    level: Optional[int] = None
+    streak: Optional[int] = None
+    accuracy: Optional[float] = None
+    sessions: Optional[int] = None
+    totalQuestions: Optional[int] = None
+    correct: Optional[int] = None
+    wrong: Optional[int] = None
+    studyTime: Optional[int] = None
+
+
+class UserStatsSaveResponse(BaseModel):
+    """Response for POST /user/stats"""
+    success: bool
+    date: str
+    saved: bool
+
+
+class UserStatsRangeResponse(BaseModel):
+    """Response for GET /user/stats/range"""
+    range: str
+    start: str
+    end: str
+    stats: List[Dict[str, Any]]
+    total: int
+
+
+class UserStatsWeeklyResponse(BaseModel):
+    """Response for GET /user/stats/weekly"""
+    range: str
+    start: str
+    end: str
+    stats: List[Dict[str, Any]]
+    total_sessions: int
+    avg_accuracy: float
+
+
+class UserStatsTodayProgressResponse(BaseModel):
+    """Response for GET /user/stats/today"""
+    sessions_today: int
+    goal: int
+    remaining: int
+    xp_today: int
+    streak: int
+    accuracy: float
+
+
+class UserStatsCleanupResponse(BaseModel):
+    """Response for DELETE /user/stats/old"""
+    success: bool
+    deleted: int
+    days_kept: int
+    cutoff_date: str
