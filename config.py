@@ -26,11 +26,20 @@ class Settings(BaseSettings):
     # Frontend
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # ============================================================
+    # HYESCRIPTURES — Separate Supabase Project
+    # ============================================================
+    HYESCRIPTURES_SUPABASE_URL: Optional[str] = None
+    HYESCRIPTURES_SUPABASE_KEY: Optional[str] = None
+
     # Environment
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 
     class Config:
         env_file = ".env"
+        env_file_encoding = "utf-8"
+        case_sensitive = True
+        extra = "ignore"
 
 settings = Settings()
