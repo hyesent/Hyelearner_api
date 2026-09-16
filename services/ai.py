@@ -26,7 +26,7 @@ class AIService:
             try:
                 self.groq = Groq(api_key=settings.GROQ_API_KEY)
                 # ✅ FIXED: Using valid, supported model
-                self.groq_model = "llama3-70b-8192"
+               self.groq_model = "openai/gpt-oss-120b"
                 print(f"✅ Groq AI initialized successfully (model: {self.groq_model})")
             except Exception as e:
                 print(f"❌ Groq initialization failed: {e}")
