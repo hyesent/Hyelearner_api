@@ -58,55 +58,31 @@ async def lookup_word(word: str):
 
 
 def normalize_dictionary_response(data, word: str):
-    """
-    Convert Suvankar's response into the format
-    HyeLearner's existing Dictionary page expects.
-    """
+    """Convert Suvankar/Wiktionary data to HyeLearner's format."""
+
+    if not isinstance(data, dict):
+        return {
+            "word": word,
+            "phonetic": "",
+            "phonetics": [],
+            "meanings": [],
+            "sourceUrls": []
+        }
 
     meanings = []
-    phonetics = []
-    source_urls = []
 
-    entries = data if isinstance(data, list) else data.get("definitions", data)
-
-    if isinstance(entries, dict):
-        entries = [entries]
-
-    for entry in entries or []:
-        part_of_speech = (
-            entry.get("partOfSpeech")
-            or entry.get("part_of_speech")
-            or entry.get("pos")
-            or ""
-        )
-
+    for meaning in data.get("meanings", []):
+        part_of_speech = meaning.get("partOfSpeech", "")
         definitions = []
 
-        raw_definitions = (
-            entry.get("definitions")
-            or entry.get("definition")
-            or []
-        )
-
-        if isinstance(raw_definitions, str):
-            raw_definitions = [{"definition": raw_definitions}]
-
-        for item in raw_definitions:
-            if isinstance(item, str):
+        for sense in meaning.get("senses", []):
+            for gloss in sense.get("glosses", []):
                 definitions.append({
-                    "definition": item,
+                    "definition": gloss,
                     "example": None,
                     "synonyms": [],
                     "antonyms": []
                 })
-                continue
-
-            definitions.append({
-                "definition": item.get("definition", ""),
-                "example": item.get("example"),
-                "synonyms": item.get("synonyms", []) or [],
-                "antonyms": item.get("antonyms", []) or []
-            })
 
         if definitions:
             meanings.append({
@@ -114,40 +90,31 @@ def normalize_dictionary_response(data, word: str):
                 "definitions": definitions
             })
 
-        pronunciation = (
-            entry.get("pronunciation")
-            or entry.get("phonetic")
-        )
+    phonetics = []
 
-        if pronunciation:
-            if isinstance(pronunciation, str):
+    raw_phonetics = data.get("phonetics", [])
+
+    if isinstance(raw_phonetics, list):
+        for phonetic in raw_phonetics:
+            if isinstance(phonetic, dict):
                 phonetics.append({
-                    "text": pronunciation,
-                    "audio": ""
-                })
-            elif isinstance(pronunciation, dict):
-                phonetics.append({
-                    "text": pronunciation.get("text")
-                    or pronunciation.get("ipa")
-                    or "",
-                    "audio": pronunciation.get("audio") or ""
+                    "text": (
+                        phonetic.get("text")
+                        or phonetic.get("ipa")
+                        or ""
+                    ),
+                    "audio": phonetic.get("audio") or ""
                 })
 
-        urls = entry.get("sourceUrls") or entry.get("source_urls") or []
+    phonetic = data.get("phonetic", "")
 
-        if isinstance(urls, str):
-            urls = [urls]
-
-        source_urls.extend(urls)
+    if not phonetic and phonetics:
+        phonetic = phonetics[0].get("text", "")
 
     return {
-        "word": data.get("word", word) if isinstance(data, dict) else word,
-        "phonetic": (
-            phonetics[0]["text"]
-            if phonetics
-            else ""
-        ),
+        "word": data.get("word", word),
+        "phonetic": phonetic,
         "phonetics": phonetics,
         "meanings": meanings,
-        "sourceUrls": list(dict.fromkeys(source_urls))
+        "sourceUrls": data.get("sourceUrls", [])
     }
