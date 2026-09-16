@@ -4,14 +4,14 @@ import httpx
 
 router = APIRouter(prefix="/dictionary", tags=["dictionary"])
 
-# freedictionaryapi.com uses a different base URL and no /en/ in the path
-FREE_DICTIONARY_API = "https://freedictionaryapi.com/api/v1/entries"
+# ✅ Correct base URL
+FREE_DICTIONARY_API = "https://api.freedictionary.dev/api/v1/entries/en"
 
 @router.get("/{word}")
 async def lookup_word(word: str):
-    """Proxy for freedictionaryapi.com — avoids CORS issues in the browser."""
+    """Proxy for freedictionaryapi.dev — avoids CORS issues."""
     async with httpx.AsyncClient(timeout=12) as client:
-        for attempt in range(2):  # Retry once on timeout
+        for attempt in range(2):
             try:
                 r = await client.get(f"{FREE_DICTIONARY_API}/{word}")
                 if r.status_code == 404:
