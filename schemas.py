@@ -1404,3 +1404,105 @@ class UserStatsCleanupResponse(BaseModel):
     deleted: int
     days_kept: int
     cutoff_date: str
+# ============================================================
+# DAILY TUTOR SCHEMAS
+# ============================================================
+
+class WeakAreaItem(BaseModel):
+    topic: str
+    subject: str
+    accuracy: int
+
+
+class RecentMistakeItem(BaseModel):
+    topic: str
+    question: str
+    user_answer: str
+    correct_answer: str
+
+
+class RecentReflectionItem(BaseModel):
+    topic: str
+    date: str
+    feeling: str  # "clear", "confusing", "difficult"
+    note: Optional[str] = None
+
+
+class PlanContext(BaseModel):
+    day: int
+    total_days: int
+    weekly_focus: str
+    hours_allocated: float
+
+
+class GenerateLessonRequest(BaseModel):
+    user_id: str
+    date: str
+    topic: str
+    subject: str
+    exam_type: str = "jamb"
+    target_score: Optional[str] = "300+"
+    user_level: int = 1
+    study_style: str = "balanced"
+    difficulty_preference: str = "balanced"
+    weak_areas: List[WeakAreaItem] = []
+    recent_mistakes: List[RecentMistakeItem] = []
+    recent_reflections: List[RecentReflectionItem] = []
+    plan_context: PlanContext
+
+
+class LessonSection(BaseModel):
+    heading: str
+    body: str
+
+
+class LessonContent(BaseModel):
+    title: str
+    estimated_minutes: int
+    difficulty: str
+    sections: List[LessonSection]
+    key_points: List[str]
+    personalization_notes: List[str] = []
+
+
+class GenerateLessonResponse(BaseModel):
+    success: bool = True
+    generated_at: str
+    lesson: Optional[LessonContent] = None
+    error: Optional[str] = None
+
+
+class GenerateQuizRequest(BaseModel):
+    user_id: str
+    date: str
+    topic: str
+    subject: str
+    exam_type: str = "jamb"
+    user_level: int = 1
+    question_count: int = 5
+    lesson_key_points: List[str]
+    lesson_section_headings: List[str]
+    recent_mistakes: List[RecentMistakeItem] = []
+
+
+class QuizQuestion(BaseModel):
+    id: str
+    question: str
+    options: List[str]
+    answer: str
+    explanation: str
+    difficulty: str
+    topic: str
+    concept: str
+
+
+class QuizContent(BaseModel):
+    questions: List[QuizQuestion]
+    personalization_notes: List[str] = []
+
+
+class GenerateQuizResponse(BaseModel):
+    success: bool = True
+    generated_at: str
+    quiz: Optional[QuizContent] = None
+    error: Optional[str] = None
