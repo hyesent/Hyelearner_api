@@ -46,7 +46,7 @@ async def search_users(
         User.id != current_user.id,
         User.is_active == True
     ).limit(limit).all()
-    
+
     # Get friend status for each user
     result = []
     friend_ids = [f.friend_id for f in db.query(Friendship).filter(Friendship.user_id == current_user.id).all()]
@@ -54,7 +54,7 @@ async def search_users(
         FriendRequest.receiver_id == current_user.id,
         FriendRequest.status == "pending"
     ).all()]
-    
+
     for user in users:
         # ✅ FIXED: Timezone-aware comparison
         is_online = False
@@ -77,7 +77,7 @@ async def search_users(
             "friendRequestSent": user.id in request_ids,
             "isOnline": is_online
         })
-    
+
     return {
         "success": True,
         "data": {
@@ -85,9 +85,65 @@ async def search_users(
             "total": len(result),
             "limit": limit
         }
-}
+    }
 
-   
+
+# ============================================================
+# 1b. ⭐ USER STATUS — relationship state for a single user
+# ============================================================
+
+@router.get("/users/status/{user_id}")
+async def get_user_status(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get relationship status between current user and target user.
+    Used by leaderboard tap-modal to decide which action button to show.
+    """
+    if user_id == current_user.id:
+        raise HTTPException(400, "Cannot check status with yourself")
+
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(404, "User not found")
+
+    # Am I friends with them? (bidirectional check)
+    is_friend = db.query(Friendship).filter(
+        or_(
+            and_(Friendship.user_id == current_user.id, Friendship.friend_id == user_id),
+            and_(Friendship.user_id == user_id, Friendship.friend_id == current_user.id),
+        )
+    ).first() is not None
+
+    # Did I already send them a pending request?
+    outgoing = db.query(FriendRequest).filter(
+        FriendRequest.sender_id == current_user.id,
+        FriendRequest.receiver_id == user_id,
+        FriendRequest.status == "pending",
+    ).first()
+
+    # Did they send me a pending request?
+    incoming = db.query(FriendRequest).filter(
+        FriendRequest.sender_id == user_id,
+        FriendRequest.receiver_id == current_user.id,
+        FriendRequest.status == "pending",
+    ).first()
+
+    return {
+        "user": {
+            "id": target.id,
+            "username": target.username,
+            "firstName": target.first_name,
+            "lastName": target.last_name,
+            "avatar": target.avatar_url,
+            "school": target.school,
+        },
+        "isFriend": is_friend,
+        "outgoingRequestId": outgoing.id if outgoing else None,
+        "incomingRequestId": incoming.id if incoming else None,
+    }
 
 
 # ============================================================
@@ -103,10 +159,10 @@ async def get_friends(
     friendships = db.query(Friendship).filter(
         Friendship.user_id == current_user.id
     ).all()
-    
+
     friend_ids = [f.friend_id for f in friendships]
     friends = db.query(User).filter(User.id.in_(friend_ids)).all()
-    
+
     # Get unread message counts
     unread_counts = {}
     for f in friends:
@@ -116,7 +172,7 @@ async def get_friends(
             Message.is_read == False
         ).count()
         unread_counts[f.id] = unread
-    
+
     return {
         "success": True,
         "data": {
@@ -156,10 +212,10 @@ async def send_friend_request(
     receiver_id = data.get("userId")
     if not receiver_id:
         raise HTTPException(400, "userId is required")
-    
+
     if receiver_id == current_user.id:
         raise HTTPException(400, "Cannot send friend request to yourself")
-    
+
     # Check if already friends
     existing = db.query(Friendship).filter(
         or_(
@@ -169,7 +225,7 @@ async def send_friend_request(
     ).first()
     if existing:
         raise HTTPException(400, "Already friends")
-    
+
     # Check if request already sent
     existing_request = db.query(FriendRequest).filter(
         FriendRequest.sender_id == current_user.id,
@@ -178,7 +234,7 @@ async def send_friend_request(
     ).first()
     if existing_request:
         raise HTTPException(400, "Friend request already sent")
-    
+
     # Check if request already received
     received_request = db.query(FriendRequest).filter(
         FriendRequest.sender_id == receiver_id,
@@ -200,7 +256,7 @@ async def send_friend_request(
                 "message": "Friend request automatically accepted"
             }
         }
-    
+
     new_request = FriendRequest(
         sender_id=current_user.id,
         receiver_id=receiver_id,
@@ -208,7 +264,7 @@ async def send_friend_request(
     )
     db.add(new_request)
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -229,7 +285,7 @@ async def get_friend_requests(
         FriendRequest.receiver_id == current_user.id,
         FriendRequest.status == "pending"
     ).all()
-    
+
     return {
         "success": True,
         "data": {
@@ -264,19 +320,19 @@ async def accept_friend_request(
         FriendRequest.receiver_id == current_user.id,
         FriendRequest.status == "pending"
     ).first()
-    
+
     if not request:
         raise HTTPException(404, "Friend request not found")
-    
+
     request.status = "accepted"
     request.updated_at = datetime.utcnow()
-    
+
     # Create bidirectional friendships
     friendship1 = Friendship(user_id=request.sender_id, friend_id=request.receiver_id)
     friendship2 = Friendship(user_id=request.receiver_id, friend_id=request.sender_id)
     db.add_all([friendship1, friendship2])
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -299,14 +355,14 @@ async def reject_friend_request(
         FriendRequest.receiver_id == current_user.id,
         FriendRequest.status == "pending"
     ).first()
-    
+
     if not request:
         raise HTTPException(404, "Friend request not found")
-    
+
     request.status = "rejected"
     request.updated_at = datetime.utcnow()
     db.commit()
-    
+
     return {"success": True, "message": "Friend request rejected"}
 
 
@@ -323,14 +379,14 @@ async def remove_friend(
             and_(Friendship.user_id == friend_id, Friendship.friend_id == current_user.id)
         )
     ).all()
-    
+
     if not friendships:
         raise HTTPException(404, "Friend not found")
-    
+
     for f in friendships:
         db.delete(f)
     db.commit()
-    
+
     return {"success": True, "message": "Friend removed"}
 
 
@@ -347,30 +403,29 @@ async def get_messages(
     db: Session = Depends(get_db)
 ):
     """Get conversation with a friend"""
-    # Check if they are friends
     is_friend = db.query(Friendship).filter(
         or_(
             and_(Friendship.user_id == current_user.id, Friendship.friend_id == friend_id),
             and_(Friendship.user_id == friend_id, Friendship.friend_id == current_user.id)
         )
     ).first()
-    
+
     if not is_friend:
         raise HTTPException(403, "You can only message friends")
-    
+
     query = db.query(Message).filter(
         or_(
             and_(Message.sender_id == current_user.id, Message.receiver_id == friend_id),
             and_(Message.sender_id == friend_id, Message.receiver_id == current_user.id)
         )
     )
-    
+
     if before:
         query = query.filter(Message.id < before)
-    
+
     messages = query.order_by(desc(Message.id)).limit(limit).all()
     messages.reverse()
-    
+
     # Mark messages from friend as read
     db.query(Message).filter(
         Message.sender_id == friend_id,
@@ -378,7 +433,7 @@ async def get_messages(
         Message.is_read == False
     ).update({"is_read": True, "read_at": datetime.utcnow()})
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -407,26 +462,24 @@ async def send_message(
     """Send a private message"""
     recipient_id = data.get("recipientId")
     message_text = data.get("message")
-    
+
     if not recipient_id or not message_text:
         raise HTTPException(400, "recipientId and message are required")
-    
-    # Check if they are friends
+
     is_friend = db.query(Friendship).filter(
         or_(
             and_(Friendship.user_id == current_user.id, Friendship.friend_id == recipient_id),
             and_(Friendship.user_id == recipient_id, Friendship.friend_id == current_user.id)
         )
     ).first()
-    
+
     if not is_friend:
         raise HTTPException(403, "You can only message friends")
-    
-    # Check if recipient exists
+
     recipient = db.query(User).filter(User.id == recipient_id).first()
     if not recipient:
         raise HTTPException(404, "Recipient not found")
-    
+
     message = Message(
         sender_id=current_user.id,
         receiver_id=recipient_id,
@@ -435,8 +488,7 @@ async def send_message(
     )
     db.add(message)
     db.commit()
-    
-    # Create activity
+
     activity = Activity(
         user_id=current_user.id,
         type="message",
@@ -445,7 +497,7 @@ async def send_message(
     )
     db.add(activity)
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -474,7 +526,7 @@ async def mark_messages_read(
         Message.is_read == False
     ).update({"is_read": True, "read_at": datetime.utcnow()})
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -490,13 +542,11 @@ async def get_unread_counts(
     db: Session = Depends(get_db)
 ):
     """Get unread message counts per conversation"""
-    # Get all unread messages
     unread = db.query(Message).filter(
         Message.receiver_id == current_user.id,
         Message.is_read == False
     ).all()
-    
-    # Group by sender
+
     conversations = {}
     for msg in unread:
         if msg.sender_id not in conversations:
@@ -510,11 +560,10 @@ async def get_unread_counts(
                 "lastMessageAt": msg.created_at
             }
         conversations[msg.sender_id]["unreadCount"] += 1
-        # Update last message if newer
         if msg.created_at > conversations[msg.sender_id]["lastMessageAt"]:
             conversations[msg.sender_id]["lastMessage"] = msg.message
             conversations[msg.sender_id]["lastMessageAt"] = msg.created_at
-    
+
     return {
         "success": True,
         "data": {
@@ -540,26 +589,24 @@ async def send_duel_invite(
     topic = data.get("topic")
     question_count = data.get("questionCount", 10)
     time_limit = data.get("timeLimit", 300)
-    
+
     if not friend_id or not subject:
         raise HTTPException(400, "friendId and subject are required")
-    
-    # Check if they are friends
+
     is_friend = db.query(Friendship).filter(
         or_(
             and_(Friendship.user_id == current_user.id, Friendship.friend_id == friend_id),
             and_(Friendship.user_id == friend_id, Friendship.friend_id == current_user.id)
         )
     ).first()
-    
+
     if not is_friend:
         raise HTTPException(403, "You can only invite friends")
-    
+
     friend = db.query(User).filter(User.id == friend_id).first()
     if not friend:
         raise HTTPException(404, "Friend not found")
-    
-    # Create invite
+
     invite = DuelInvite(
         sender_id=current_user.id,
         receiver_id=friend_id,
@@ -572,7 +619,7 @@ async def send_duel_invite(
     )
     db.add(invite)
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -596,7 +643,7 @@ async def get_duel_invites(
         DuelInvite.receiver_id == current_user.id,
         DuelInvite.status == "pending"
     ).order_by(DuelInvite.invited_at.desc()).all()
-    
+
     return {
         "success": True,
         "data": {
@@ -631,41 +678,37 @@ async def respond_duel_invite(
 ):
     """Accept or reject a duel invite"""
     accept = data.get("accept", False)
-    
+
     invite = db.query(DuelInvite).filter(
         DuelInvite.id == invite_id,
         DuelInvite.receiver_id == current_user.id,
         DuelInvite.status == "pending"
     ).first()
-    
+
     if not invite:
         raise HTTPException(404, "Invite not found or already responded")
-    
+
     if invite.expires_at < datetime.utcnow():
         invite.status = "expired"
         db.commit()
         raise HTTPException(400, "Invite has expired")
-    
+
     if not accept:
         invite.status = "rejected"
         db.commit()
         return {"success": True, "message": "Duel invite rejected"}
-    
-    # ACCEPT — Create the duel using existing duel endpoint logic
-    # Generate questions (simplified — reuse your existing logic)
-    from routes.duel import create_duel_from_invite  # You'll need to extract this logic
-    
-    # For now, create a simple duel
-    import secrets
+
+    from routes.duel import create_duel_from_invite
+
     code = secrets.token_hex(3).upper()
-    
+
     duel = Duel(
         challenger_id=invite.sender_id,
         opponent_id=current_user.id,
         code=code,
         subject=invite.subject,
         topic=invite.topic,
-        questions_data=[],  # Will be populated by frontend
+        questions_data=[],
         question_ids=[],
         status="active",
         is_public=False,
@@ -675,11 +718,11 @@ async def respond_duel_invite(
     )
     db.add(duel)
     db.commit()
-    
+
     invite.status = "accepted"
     invite.duel_id = duel.id
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -705,10 +748,10 @@ async def get_study_groups(
     memberships = db.query(StudyGroupMember).filter(
         StudyGroupMember.user_id == current_user.id
     ).all()
-    
+
     group_ids = [m.group_id for m in memberships]
     groups = db.query(StudyGroup).filter(StudyGroup.id.in_(group_ids)).all()
-    
+
     return {
         "success": True,
         "data": {
@@ -741,13 +784,12 @@ async def create_study_group(
     description = data.get("description")
     subject = data.get("subject")
     member_ids = data.get("memberIds", [])
-    
+
     if not name:
         raise HTTPException(400, "name is required")
-    
-    # Generate invite code
+
     invite_code = secrets.token_hex(3).upper()
-    
+
     group = StudyGroup(
         name=name,
         description=description,
@@ -757,16 +799,14 @@ async def create_study_group(
     )
     db.add(group)
     db.commit()
-    
-    # Add creator as member
+
     member = StudyGroupMember(
         group_id=group.id,
         user_id=current_user.id,
         role="admin"
     )
     db.add(member)
-    
-    # Add other members
+
     for member_id in member_ids:
         if member_id != current_user.id:
             m = StudyGroupMember(
@@ -775,9 +815,9 @@ async def create_study_group(
                 role="member"
             )
             db.add(m)
-    
+
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -802,25 +842,24 @@ async def join_study_group(
 ):
     """Join a study group"""
     invite_code = data.get("inviteCode")
-    
+
     query = db.query(StudyGroup).filter(StudyGroup.id == group_id)
     if invite_code:
         query = query.filter(StudyGroup.invite_code == invite_code)
-    
+
     group = query.first()
-    
+
     if not group:
         raise HTTPException(404, "Group not found or invalid invite code")
-    
-    # Check if already a member
+
     existing = db.query(StudyGroupMember).filter(
         StudyGroupMember.group_id == group_id,
         StudyGroupMember.user_id == current_user.id
     ).first()
-    
+
     if existing:
         raise HTTPException(400, "Already a member of this group")
-    
+
     member = StudyGroupMember(
         group_id=group_id,
         user_id=current_user.id,
@@ -828,7 +867,7 @@ async def join_study_group(
     )
     db.add(member)
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -849,13 +888,13 @@ async def leave_study_group(
         StudyGroupMember.group_id == group_id,
         StudyGroupMember.user_id == current_user.id
     ).first()
-    
+
     if not member:
         raise HTTPException(404, "Not a member of this group")
-    
+
     db.delete(member)
     db.commit()
-    
+
     return {"success": True, "message": "Left group successfully"}
 
 
@@ -867,20 +906,19 @@ async def get_group_messages(
     db: Session = Depends(get_db)
 ):
     """Get messages from a study group"""
-    # Check membership
     member = db.query(StudyGroupMember).filter(
         StudyGroupMember.group_id == group_id,
         StudyGroupMember.user_id == current_user.id
     ).first()
-    
+
     if not member:
         raise HTTPException(403, "You are not a member of this group")
-    
+
     messages = db.query(StudyGroupMessage).filter(
         StudyGroupMessage.group_id == group_id
     ).order_by(desc(StudyGroupMessage.id)).limit(limit).all()
     messages.reverse()
-    
+
     return {
         "success": True,
         "data": {
@@ -914,18 +952,17 @@ async def send_group_message(
     message_text = data.get("message")
     if not message_text:
         raise HTTPException(400, "message is required")
-    
-    # Check membership
+
     member = db.query(StudyGroupMember).filter(
         StudyGroupMember.group_id == group_id,
         StudyGroupMember.user_id == current_user.id
     ).first()
-    
+
     if not member:
         raise HTTPException(403, "You are not a member of this group")
-    
+
     is_announcement = data.get("isAnnouncement", False) and member.role == "admin"
-    
+
     message = StudyGroupMessage(
         group_id=group_id,
         sender_id=current_user.id,
@@ -933,12 +970,11 @@ async def send_group_message(
         is_announcement=is_announcement
     )
     db.add(message)
-    
-    # Update group activity
+
     group = db.query(StudyGroup).filter(StudyGroup.id == group_id).first()
     group.updated_at = datetime.utcnow()
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -962,34 +998,31 @@ async def pin_group_message(
     db: Session = Depends(get_db)
 ):
     """Pin a message in the group"""
-    # Check if user is admin
     member = db.query(StudyGroupMember).filter(
         StudyGroupMember.group_id == group_id,
         StudyGroupMember.user_id == current_user.id,
         StudyGroupMember.role == "admin"
     ).first()
-    
+
     if not member:
         raise HTTPException(403, "Only admins can pin messages")
-    
-    # Unpin previous pinned message
+
     db.query(StudyGroupMessage).filter(
         StudyGroupMessage.group_id == group_id,
         StudyGroupMessage.is_pinned == True
     ).update({"is_pinned": False})
-    
-    # Pin new message
+
     message = db.query(StudyGroupMessage).filter(
         StudyGroupMessage.id == message_id,
         StudyGroupMessage.group_id == group_id
     ).first()
-    
+
     if not message:
         raise HTTPException(404, "Message not found")
-    
+
     message.is_pinned = True
     db.commit()
-    
+
     return {"success": True, "message": "Message pinned"}
 
 
@@ -1004,17 +1037,16 @@ async def send_announcement(
     message_text = data.get("message")
     if not message_text:
         raise HTTPException(400, "message is required")
-    
-    # Check if user is admin
+
     member = db.query(StudyGroupMember).filter(
         StudyGroupMember.group_id == group_id,
         StudyGroupMember.user_id == current_user.id,
         StudyGroupMember.role == "admin"
     ).first()
-    
+
     if not member:
         raise HTTPException(403, "Only admins can send announcements")
-    
+
     message = StudyGroupMessage(
         group_id=group_id,
         sender_id=current_user.id,
@@ -1023,7 +1055,7 @@ async def send_announcement(
     )
     db.add(message)
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -1044,13 +1076,12 @@ async def get_group_members(
     members = db.query(StudyGroupMember).filter(
         StudyGroupMember.group_id == group_id
     ).all()
-    
+
     user_ids = [m.user_id for m in members]
     users = db.query(User).filter(User.id.in_(user_ids)).all()
-    
-    # Create role mapping
+
     role_map = {m.user_id: m.role for m in members}
-    
+
     return {
         "success": True,
         "data": {
@@ -1082,18 +1113,16 @@ async def get_friend_activity(
     db: Session = Depends(get_db)
 ):
     """Get activity feed from friends"""
-    # Get friends' IDs
     friendships = db.query(Friendship).filter(
         Friendship.user_id == current_user.id
     ).all()
-    
+
     friend_ids = [f.friend_id for f in friendships]
-    
-    # Get activities from friends
+
     activities = db.query(Activity).filter(
         Activity.user_id.in_(friend_ids)
     ).order_by(desc(Activity.created_at)).limit(limit).all()
-    
+
     return {
         "success": True,
         "data": {
@@ -1126,7 +1155,7 @@ async def get_global_activity(
     activities = db.query(Activity).order_by(
         desc(Activity.created_at)
     ).limit(limit).all()
-    
+
     stats = {
         "totalUsers": db.query(User).filter(User.is_active == True).count(),
         "onlineNow": db.query(User).filter(
@@ -1137,7 +1166,7 @@ async def get_global_activity(
             Activity.created_at > datetime.utcnow().replace(hour=0, minute=0, second=0)
         ).count()
     }
-    
+
     return {
         "success": True,
         "data": {
@@ -1170,10 +1199,10 @@ async def create_challenge(
     friend_ids = data.get("friendIds", [])
     duration = data.get("duration", 7)
     stake = data.get("stake")
-    
+
     if not challenge_type or not friend_ids:
         raise HTTPException(400, "type and friendIds are required")
-    
+
     challenge = Challenge(
         creator_id=current_user.id,
         type=challenge_type,
@@ -1185,24 +1214,22 @@ async def create_challenge(
     )
     db.add(challenge)
     db.commit()
-    
-    # Add creator
+
     participant = ChallengeParticipant(
         challenge_id=challenge.id,
         user_id=current_user.id
     )
     db.add(participant)
-    
-    # Add friends
+
     for friend_id in friend_ids:
         p = ChallengeParticipant(
             challenge_id=challenge.id,
             user_id=friend_id
         )
         db.add(p)
-    
+
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -1227,12 +1254,12 @@ async def get_challenges(
     participants = db.query(ChallengeParticipant).filter(
         ChallengeParticipant.user_id == current_user.id
     ).all()
-    
+
     challenge_ids = [p.challenge_id for p in participants]
     challenges = db.query(Challenge).filter(
         Challenge.id.in_(challenge_ids)
     ).order_by(desc(Challenge.created_at)).all()
-    
+
     return {
         "success": True,
         "data": {
@@ -1267,23 +1294,22 @@ async def accept_challenge(
     challenge = db.query(Challenge).filter(Challenge.id == challenge_id).first()
     if not challenge:
         raise HTTPException(404, "Challenge not found")
-    
-    # Check if already participating
+
     existing = db.query(ChallengeParticipant).filter(
         ChallengeParticipant.challenge_id == challenge_id,
         ChallengeParticipant.user_id == current_user.id
     ).first()
-    
+
     if existing:
         raise HTTPException(400, "Already participating in this challenge")
-    
+
     participant = ChallengeParticipant(
         challenge_id=challenge_id,
         user_id=current_user.id
     )
     db.add(participant)
     db.commit()
-    
+
     return {
         "success": True,
         "data": {
@@ -1303,29 +1329,26 @@ async def get_challenge_status(
     challenge = db.query(Challenge).filter(Challenge.id == challenge_id).first()
     if not challenge:
         raise HTTPException(404, "Challenge not found")
-    
+
     participants = db.query(ChallengeParticipant).filter(
         ChallengeParticipant.challenge_id == challenge_id
     ).all()
-    
-    # Calculate progress for each participant (simplified)
+
     results = []
     for p in participants:
-        # Get user stats
         stats = db.query(UserStats).filter(UserStats.user_id == p.user_id).first()
         progress = stats.streak if challenge.type == "streak" else stats.xp // 100
         results.append({
             "id": p.user_id,
             "username": p.user.username,
             "progress": progress or 0,
-            "rank": 0  # Will be calculated after sorting
+            "rank": 0
         })
-    
-    # Sort by progress and assign ranks
+
     results.sort(key=lambda x: x["progress"], reverse=True)
     for i, r in enumerate(results):
         r["rank"] = i + 1
-    
+
     return {
         "success": True,
         "data": {
