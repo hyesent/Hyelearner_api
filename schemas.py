@@ -1,11 +1,11 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
 
 
 # ============================================================
-# ENUMS (for validation)
+# ENUMS
 # ============================================================
 
 class UserRole(str, Enum):
@@ -33,7 +33,7 @@ class DuelStatus(str, Enum):
 
 
 # ============================================================
-# USER SCHEMAS (MUST COME BEFORE TokenResponse)
+# USER SCHEMAS
 # ============================================================
 
 class UserResponse(BaseModel):
@@ -323,7 +323,7 @@ class SubscriptionInit(BaseModel):
     plan: Optional[str] = None
     tier: Optional[str] = None
     currency: str = "NGN"
-    
+
     @field_validator('plan', 'tier')
     @classmethod
     def normalize_plan(cls, v):
@@ -552,7 +552,7 @@ class SyncResponse(BaseModel):
 
 
 # ============================================================
-# HYETUTOR — ANALYZE REQUEST (Bundled Data from Frontend)
+# HYETUTOR — ANALYZE REQUEST (Bundled Data)
 # ============================================================
 
 class StudyPlanExamInfo(BaseModel):
@@ -703,7 +703,7 @@ class HyeTutorAnalyzeRequest(BaseModel):
 
 
 # ============================================================
-# HYETUTOR — ANALYZE RESPONSE (All 18 Sections)
+# HYETUTOR — ANALYZE RESPONSE
 # ============================================================
 
 class MissionResponse(BaseModel):
@@ -883,7 +883,7 @@ class HyeTutorAnalyzeResponse(BaseModel):
 
 
 # ============================================================
-# HYETUTOR — CHAT Request & Response
+# HYETUTOR — CHAT
 # ============================================================
 
 class ChatContext(BaseModel):
@@ -911,8 +911,8 @@ class HyeTutorChatResponse(BaseModel):
     success: bool = True
     answer: str
     confidence: int
-    suggested_actions: List[SuggestedAction]
-    related_insights: List[str]
+    suggested_actions: List[SuggestedAction] = []
+    related_insights: List[str] = []
 
 
 # ============================================================
@@ -938,7 +938,7 @@ class MissionCompleteResponse(BaseModel):
 
 class ReflectionRequest(BaseModel):
     date: str
-    mood: str  # great, okay, difficult
+    mood: str
     notes: Optional[str] = None
     time_taken: float
     sessions_completed: int
@@ -970,7 +970,7 @@ class ReflectionResponse(BaseModel):
 
 
 # ============================================================
-# HYETUTOR — CACHED Response
+# HYETUTOR — CACHED
 # ============================================================
 
 class HyeTutorCachedResponse(BaseModel):
@@ -982,10 +982,6 @@ class HyeTutorCachedResponse(BaseModel):
 
 # ============================================================
 # SOCIAL SCHEMAS
-# ============================================================
-
-# ============================================================
-# USER SEARCH
 # ============================================================
 
 class UserSearchResult(BaseModel):
@@ -1009,10 +1005,6 @@ class UserSearchResponse(BaseModel):
     success: bool = True
     data: Dict[str, Any]
 
-
-# ============================================================
-# FRIENDS
-# ============================================================
 
 class FriendRequestResponse(BaseModel):
     id: int
@@ -1042,10 +1034,6 @@ class FriendsListResponse(BaseModel):
     success: bool = True
     data: Dict[str, Any]
 
-
-# ============================================================
-# MESSAGES
-# ============================================================
 
 class MessageResponse(BaseModel):
     id: int
@@ -1080,10 +1068,6 @@ class UnreadCountResponse(BaseModel):
     data: Dict[str, Any]
 
 
-# ============================================================
-# DUEL INVITES
-# ============================================================
-
 class DuelInviteRequest(BaseModel):
     friendId: int
     subject: str
@@ -1112,10 +1096,6 @@ class DuelInviteListResponse(BaseModel):
 class DuelInviteRespondRequest(BaseModel):
     accept: bool
 
-
-# ============================================================
-# STUDY GROUPS
-# ============================================================
 
 class StudyGroupCreateRequest(BaseModel):
     name: str
@@ -1184,10 +1164,6 @@ class StudyGroupMembersResponse(BaseModel):
     data: Dict[str, Any]
 
 
-# ============================================================
-# ACTIVITY FEED
-# ============================================================
-
 class ActivityResponse(BaseModel):
     id: int
     type: str
@@ -1213,12 +1189,8 @@ class GlobalActivityResponse(BaseModel):
     data: Dict[str, Any]
 
 
-# ============================================================
-# CHALLENGES
-# ============================================================
-
 class ChallengeCreateRequest(BaseModel):
-    type: str  # streak, questions, accuracy, xp
+    type: str
     friendIds: List[int]
     duration: int = 7
     stake: Optional[str] = None
@@ -1245,15 +1217,11 @@ class ChallengeStatusResponse(BaseModel):
 
 
 # ============================================================
-# FEEDBACK & CONTRIBUTIONS SCHEMAS
-# ============================================================
-
-# ============================================================
-# FEEDBACK SCHEMAS
+# FEEDBACK & CONTRIBUTIONS
 # ============================================================
 
 class FeedbackCreate(BaseModel):
-    type: str = "general"  # general, bug, feature, improvement
+    type: str = "general"
     message: str = Field(..., min_length=1)
     rating: Optional[int] = Field(None, ge=1, le=5)
     email: Optional[str] = None
@@ -1277,16 +1245,12 @@ class FeedbackListResponse(BaseModel):
     data: Dict[str, Any]
 
 
-# ============================================================
-# CONTRIBUTION SCHEMAS
-# ============================================================
-
 class ContributionCreate(BaseModel):
     university: str = Field(..., min_length=1)
     course: str = Field(..., min_length=1)
     year: int = Field(..., ge=2000, le=datetime.now().year + 1)
     cutoff: int = Field(..., ge=0, le=400)
-    exam_type: str = Field(..., min_length=1)  # jamb, waec, neco, etc.
+    exam_type: str = Field(..., min_length=1)
     source: Optional[str] = None
 
 
@@ -1298,7 +1262,7 @@ class ContributionResponse(BaseModel):
     cutoff: int
     exam_type: str
     source: Optional[str]
-    status: str  # pending, approved, rejected
+    status: str
     user_id: int
     user: Optional[Dict[str, Any]]
     created_at: datetime
@@ -1334,7 +1298,6 @@ class MyContributionsResponse(BaseModel):
 # ============================================================
 
 class UserStatsResponse(BaseModel):
-    """Response for GET /user/stats"""
     date: str
     xp: int
     level: int
@@ -1350,7 +1313,6 @@ class UserStatsResponse(BaseModel):
 
 
 class UserStatsUpdate(BaseModel):
-    """Request for POST /user/stats"""
     xp: Optional[int] = None
     level: Optional[int] = None
     streak: Optional[int] = None
@@ -1363,14 +1325,12 @@ class UserStatsUpdate(BaseModel):
 
 
 class UserStatsSaveResponse(BaseModel):
-    """Response for POST /user/stats"""
     success: bool
     date: str
     saved: bool
 
 
 class UserStatsRangeResponse(BaseModel):
-    """Response for GET /user/stats/range"""
     range: str
     start: str
     end: str
@@ -1379,7 +1339,6 @@ class UserStatsRangeResponse(BaseModel):
 
 
 class UserStatsWeeklyResponse(BaseModel):
-    """Response for GET /user/stats/weekly"""
     range: str
     start: str
     end: str
@@ -1389,7 +1348,6 @@ class UserStatsWeeklyResponse(BaseModel):
 
 
 class UserStatsTodayProgressResponse(BaseModel):
-    """Response for GET /user/stats/today"""
     sessions_today: int
     goal: int
     remaining: int
@@ -1399,11 +1357,12 @@ class UserStatsTodayProgressResponse(BaseModel):
 
 
 class UserStatsCleanupResponse(BaseModel):
-    """Response for DELETE /user/stats/old"""
     success: bool
     deleted: int
     days_kept: int
     cutoff_date: str
+
+
 # ============================================================
 # DAILY TUTOR SCHEMAS
 # ============================================================
@@ -1424,7 +1383,7 @@ class RecentMistakeItem(BaseModel):
 class RecentReflectionItem(BaseModel):
     topic: str
     date: str
-    feeling: str  # "clear", "confusing", "difficult"
+    feeling: str
     note: Optional[str] = None
 
 
@@ -1470,6 +1429,7 @@ class GenerateLessonResponse(BaseModel):
     generated_at: str
     lesson: Optional[LessonContent] = None
     error: Optional[str] = None
+    from_cache: bool = False
 
 
 class GenerateQuizRequest(BaseModel):
@@ -1506,3 +1466,222 @@ class GenerateQuizResponse(BaseModel):
     generated_at: str
     quiz: Optional[QuizContent] = None
     error: Optional[str] = None
+    from_cache: bool = False
+
+
+# ============================================================
+# ⭐ NEW — DAILY TUTOR SESSION (DB-BACKED)
+# ============================================================
+
+class DailyTutorSessionResponse(BaseModel):
+    id: int
+    user_id: int
+    date: date
+    subject: str
+    topic: str
+    lesson_json: Optional[Dict[str, Any]] = None
+    quiz_json: Optional[Dict[str, Any]] = None
+    answers: Optional[Dict[str, Any]] = None
+    result: Optional[Dict[str, Any]] = None
+    reflection: Optional[Dict[str, Any]] = None
+    status: str
+    current_step: str
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DailyTutorTodayResponse(BaseModel):
+    session: Optional[DailyTutorSessionResponse] = None
+
+
+class DailyTutorHistoryItem(BaseModel):
+    id: int
+    date: date
+    subject: str
+    topic: str
+    accuracy: Optional[float] = None
+    status: str
+    completed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DailyTutorHistoryResponse(BaseModel):
+    sessions: List[DailyTutorHistoryItem] = []
+
+
+class DailyTutorSubmitQuizRequest(BaseModel):
+    answers: Dict[str, str] = {}
+
+
+class DailyTutorSubmitReflectionRequest(BaseModel):
+    feeling: str
+    note: Optional[str] = None
+
+
+# ============================================================
+# ⭐ NEW — AI USAGE
+# ============================================================
+
+class AIUsageResponse(BaseModel):
+    used: int
+    limit: int
+    failed: int = 0
+    reset_at: str
+
+
+# ============================================================
+# ⭐ NEW — MISTAKE EXPLANATION SAVE
+# ============================================================
+
+class SaveMistakeExplanationRequest(BaseModel):
+    mistake_id: int
+    explanation: Dict[str, Any]
+
+
+class SavedMistakeExplanationResponse(BaseModel):
+    id: int
+    mistake_id: int
+    explanation_json: Dict[str, Any]
+    generated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================
+# ⭐ NEW — WEAKNESS SNAPSHOT
+# ============================================================
+
+class WeaknessSnapshotResponse(BaseModel):
+    id: int
+    snapshot_json: Dict[str, Any]
+    summary: Optional[str]
+    generated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WeaknessHistoryResponse(BaseModel):
+    snapshots: List[WeaknessSnapshotResponse] = []
+
+
+# ============================================================
+# ⭐ NEW — CAREER
+# ============================================================
+
+class CareerCheckRequest(BaseModel):
+    university: str
+    country: str
+    course: str
+    score: float
+    score_type: str
+    subjects: List[str] = []
+
+
+class CareerCheckResponse(BaseModel):
+    id: int
+    university: str
+    country: str
+    course: str
+    score: Optional[float]
+    score_type: Optional[str]
+    subjects: Optional[List[str]]
+    status: Optional[str]
+    chance_percentage: Optional[int]
+    result_json: Dict[str, Any]
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CareerHistoryItem(BaseModel):
+    id: int
+    university: str
+    course: str
+    status: Optional[str]
+    chance_percentage: Optional[int]
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CareerHistoryResponse(BaseModel):
+    checks: List[CareerHistoryItem] = []
+
+
+# ============================================================
+# ⭐ NEW — STUDY PLAN
+# ============================================================
+
+class StudyPlanResponse(BaseModel):
+    id: int
+    plan_json: Dict[str, Any]
+    exam_type: Optional[str]
+    exam_date: Optional[date]
+    target_score: Optional[str]
+    goal: Optional[str]
+    subjects: Optional[List[str]]
+    study_style: Optional[str]
+    hours_per_week: Optional[int]
+    generated_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================
+# ⭐ NEW — DICTIONARY
+# ============================================================
+
+class DictionaryFavoriteResponse(BaseModel):
+    word: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class DictionaryFavoriteAdd(BaseModel):
+    word: str
+
+class DictionaryRecentItem(BaseModel):
+    word: str
+    searched_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class DictionaryRecentAdd(BaseModel):
+    word: str
+
+
+# ============================================================
+#  NEW — HYDRATE (the big one)
+# ============================================================
+
+class GamificationSnapshot(BaseModel):
+    xp: int = 0
+    total_xp: int = 0
+    level: int = 1
+    streak: int = 0
+    longest_streak: int = 0
+    badges: List[str] = []
+
+
+class SubscriptionSnapshot(BaseModel):
+    is_active: bool = False
+    plan: str = "Free"
+    expires_at: Optional[datetime] = None
+    days_remaining: int = 0
+
+
+class HydrateResponse(BaseModel):
+    user: UserResponse
+    ai_usage: AIUsageResponse
+    study_plan: Optional[StudyPlanResponse] = None
+    daily_tutor_today: Optional[DailyTutorSessionResponse] = None
+    daily_tutor_recent: List[DailyTutorHistoryItem] = []
+    hyetutor_cache: Optional[Dict[str, Any]] = None
+    gamification: GamificationSnapshot
+    mistakes_count: int = 0
+    favorites: List[str] = []
+    subscription: SubscriptionSnapshot
