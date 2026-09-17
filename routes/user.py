@@ -11,7 +11,7 @@ from schemas import (
     UserResponse, UserUpdate, UserSettingsResponse, UserSettingsUpdate,
     GamificationResponse, UserStatsResponse, UserStatsUpdate, UserStatsRangeResponse
 )
-from dependencies import get_current_user
+from dependencies import get_current_user, get_ai_usage_today
 from auth import get_password_hash, verify_password
 
 router = APIRouter()
@@ -37,7 +37,7 @@ async def update_profile(
     for key, value in user_data.model_dump(exclude_unset=True).items():
         if value is not None:
             setattr(current_user, key, value)
-    
+
     current_user.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(current_user)
@@ -54,10 +54,10 @@ async def upload_avatar(
     ext = file.filename.split('.')[-1] if file.filename else 'png'
     avatar_data = base64.b64encode(contents).decode('utf-8')
     avatar_url = f"data:image/{ext};base64,{avatar_data}"
-    
+
     current_user.avatar_url = avatar_url
     db.commit()
-    
+
     return {"avatar_url": avatar_url}
 
 
@@ -73,13 +73,13 @@ async def get_settings(
     settings = db.query(UserSettings).filter(
         UserSettings.user_id == current_user.id
     ).first()
-    
+
     if not settings:
         settings = UserSettings(user_id=current_user.id)
         db.add(settings)
         db.commit()
         db.refresh(settings)
-    
+
     return settings
 
 
@@ -92,15 +92,15 @@ async def update_settings(
     settings = db.query(UserSettings).filter(
         UserSettings.user_id == current_user.id
     ).first()
-    
+
     if not settings:
         settings = UserSettings(user_id=current_user.id)
         db.add(settings)
-    
+
     for key, value in settings_data.model_dump(exclude_unset=True).items():
         if value is not None:
             setattr(settings, key, value)
-    
+
     db.commit()
     db.refresh(settings)
     return settings
@@ -142,17 +142,17 @@ async def change_password(
             status_code=400,
             detail="Current password is incorrect"
         )
-    
+
     if len(new_password) < 6:
         raise HTTPException(
             status_code=400,
             detail="New password must be at least 6 characters"
         )
-    
+
     current_user.hashed_password = get_password_hash(new_password)
     current_user.updated_at = datetime.utcnow()
     db.commit()
-    
+
     return {"message": "Password updated successfully"}
 
 
@@ -165,18 +165,13 @@ async def get_user_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Get today's user stats.
-    Returns cached daily stats if available, otherwise computes fresh.
-    """
     today = date.today()
-    
-    # Try to get today's stats from cache
+
     stats = db.query(UserDailyStats).filter(
         UserDailyStats.user_id == current_user.id,
         UserDailyStats.date == today
     ).first()
-    
+
     if stats:
         return {
             "date": stats.date.isoformat(),
@@ -192,43 +187,36 @@ async def get_user_stats(
             "fromCache": True,
             "cachedAt": stats.updated_at.isoformat()
         }
-    
-    # Compute fresh stats from user data
+
     return await compute_user_stats(current_user.id, db)
 
 
 async def compute_user_stats(user_id: int, db: Session):
-    """Compute user stats from scratch"""
     today = date.today()
-    
-    # Get all completed sessions
+
     sessions = db.query(PracticeSession).filter(
         PracticeSession.user_id == user_id,
         PracticeSession.is_completed == True
     ).all()
-    
-    # Get gamification stats
+
     gamification = db.query(UserStats).filter(
         UserStats.user_id == user_id
     ).first()
-    
-    # Calculate stats
+
     total_questions = sum(s.total_questions or 0 for s in sessions)
     correct = sum(s.correct_answers or 0 for s in sessions)
     wrong = sum(s.wrong_answers or 0 for s in sessions)
     accuracy = (correct / total_questions * 100) if total_questions > 0 else 0
-    
-    # Get today's sessions
+
     today_sessions = [
-        s for s in sessions 
+        s for s in sessions
         if s.completed_at and s.completed_at.date() == today
     ]
-    
-    # Calculate study time
+
     study_time_minutes = sum(
         (s.time_taken or 0) for s in today_sessions
     ) // 60
-    
+
     result = {
         "date": today.isoformat(),
         "xp": gamification.xp if gamification else 0,
@@ -242,10 +230,9 @@ async def compute_user_stats(user_id: int, db: Session):
         "studyTime": study_time_minutes,
         "fromCache": False
     }
-    
-    # Save to cache for future
+
     await save_daily_stats(user_id, result, db)
-    
+
     return result
 
 
@@ -259,17 +246,13 @@ async def save_user_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Save today's user stats to the database.
-    """
     today = date.today()
-    
-    # Get or create daily stats
+
     stats = db.query(UserDailyStats).filter(
         UserDailyStats.user_id == current_user.id,
         UserDailyStats.date == today
     ).first()
-    
+
     if stats:
         stats.xp = stats_data.get("xp", stats.xp)
         stats.level = stats_data.get("level", stats.level)
@@ -296,9 +279,9 @@ async def save_user_stats(
             study_time_minutes=stats_data.get("studyTime", 0)
         )
         db.add(stats)
-    
+
     db.commit()
-    
+
     return {
         "success": True,
         "date": today.isoformat(),
@@ -307,14 +290,13 @@ async def save_user_stats(
 
 
 async def save_daily_stats(user_id: int, stats_data: dict, db: Session):
-    """Helper function to save daily stats"""
     today = date.today()
-    
+
     stats = db.query(UserDailyStats).filter(
         UserDailyStats.user_id == user_id,
         UserDailyStats.date == today
     ).first()
-    
+
     if stats:
         stats.xp = stats_data.get("xp", stats.xp)
         stats.level = stats_data.get("level", stats.level)
@@ -341,12 +323,12 @@ async def save_daily_stats(user_id: int, stats_data: dict, db: Session):
             study_time_minutes=stats_data.get("studyTime", 0)
         )
         db.add(stats)
-    
+
     db.commit()
 
 
 # ============================================================
-# DAILY STATS — GET RANGE (Weekly/Monthly)
+# DAILY STATS — GET RANGE
 # ============================================================
 
 @router.get("/stats/range")
@@ -355,16 +337,13 @@ async def get_stats_range(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Get user stats for a date range.
-    """
     start_date = date.today() - timedelta(days=days)
-    
+
     stats = db.query(UserDailyStats).filter(
         UserDailyStats.user_id == current_user.id,
         UserDailyStats.date >= start_date
     ).order_by(UserDailyStats.date).all()
-    
+
     return {
         "range": f"Last {days} days",
         "start": start_date.isoformat(),
@@ -386,7 +365,7 @@ async def get_stats_range(
 
 
 # ============================================================
-# DAILY STATS — GET TODAY'S PROGRESS (Quick Check)
+# DAILY STATS — TODAY'S PROGRESS
 # ============================================================
 
 @router.get("/stats/today")
@@ -394,32 +373,26 @@ async def get_today_progress(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Quick check: how many sessions today?
-    """
     today = date.today()
-    
-    # Count today's sessions
+
     session_count = db.query(PracticeSession).filter(
         PracticeSession.user_id == current_user.id,
         func.date(PracticeSession.completed_at) == today,
         PracticeSession.is_completed == True
     ).count()
-    
-    # Get today's stats
+
     stats = db.query(UserDailyStats).filter(
         UserDailyStats.user_id == current_user.id,
         UserDailyStats.date == today
     ).first()
-    
-    # Get gamification for streak
+
     gamification = db.query(UserStats).filter(
         UserStats.user_id == current_user.id
     ).first()
-    
+
     return {
         "sessions_today": session_count,
-        "goal": 5,  # Daily goal
+        "goal": 5,
         "remaining": max(0, 5 - session_count),
         "xp_today": stats.xp if stats else 0,
         "streak": gamification.streak if gamification else 0,
@@ -428,7 +401,7 @@ async def get_today_progress(
 
 
 # ============================================================
-# DAILY STATS — WEEKLY AGGREGATED
+# DAILY STATS — WEEKLY
 # ============================================================
 
 @router.get("/stats/weekly")
@@ -436,26 +409,20 @@ async def get_weekly_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Get weekly aggregated stats (last 7 days).
-    """
     start_date = date.today() - timedelta(days=7)
-    
-    # Get stats for last 7 days
+
     stats = db.query(UserDailyStats).filter(
         UserDailyStats.user_id == current_user.id,
         UserDailyStats.date >= start_date
     ).all()
-    
-    # If no daily stats, compute from sessions
+
     if not stats:
         sessions = db.query(PracticeSession).filter(
             PracticeSession.user_id == current_user.id,
             func.date(PracticeSession.completed_at) >= start_date,
             PracticeSession.is_completed == True
         ).all()
-        
-        # Group by date
+
         daily_data = {}
         for s in sessions:
             if s.completed_at:
@@ -465,8 +432,7 @@ async def get_weekly_stats(
                 daily_data[day]["sessions"] += 1
                 daily_data[day]["correct"] += s.correct_answers or 0
                 daily_data[day]["total"] += s.total_questions or 0
-        
-        # Format response
+
         weekly_data = []
         for day, data in daily_data.items():
             acc = (data["correct"] / data["total"] * 100) if data["total"] > 0 else 0
@@ -474,9 +440,9 @@ async def get_weekly_stats(
                 "day": day,
                 "sessions": data["sessions"],
                 "accuracy": round(acc, 1),
-                "xp": data["sessions"] * 10  # Estimate
+                "xp": data["sessions"] * 10
             })
-        
+
         return {
             "range": "Last 7 days",
             "start": start_date.isoformat(),
@@ -485,7 +451,7 @@ async def get_weekly_stats(
             "total_sessions": sum(d["sessions"] for d in weekly_data),
             "avg_accuracy": round(sum(d["accuracy"] for d in weekly_data) / len(weekly_data), 1) if weekly_data else 0
         }
-    
+
     return {
         "range": "Last 7 days",
         "start": start_date.isoformat(),
@@ -505,7 +471,7 @@ async def get_weekly_stats(
 
 
 # ============================================================
-# DAILY STATS — CLEANUP OLD STATS
+# DAILY STATS — CLEANUP
 # ============================================================
 
 @router.delete("/stats/old")
@@ -514,21 +480,179 @@ async def cleanup_old_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Cleanup stats older than specified days.
-    """
     cutoff = date.today() - timedelta(days=days_to_keep)
-    
+
     deleted = db.query(UserDailyStats).filter(
         UserDailyStats.user_id == current_user.id,
         UserDailyStats.date < cutoff
     ).delete()
-    
+
     db.commit()
-    
+
     return {
         "success": True,
         "deleted": deleted,
         "days_kept": days_to_keep,
         "cutoff_date": cutoff.isoformat()
+    }
+
+
+# ============================================================
+# ⭐ NEW — AI USAGE
+# ============================================================
+
+@router.get("/ai-usage")
+async def get_ai_usage_endpoint(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return get_ai_usage_today(db, current_user.id)
+
+
+# ============================================================
+# ⭐ NEW — HYDRATE
+# ============================================================
+
+@router.get("/hydrate")
+async def hydrate(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from models import (
+        Subscription, StudyPlan,
+        DailyTutorSession, DailyTutorLesson, DailyTutorQuiz,
+        HyetutorCache, Mistake, DictionaryFavorite,
+    )
+
+    today = date.today()
+
+    user_resp = {
+        "id": current_user.id,
+        "email": current_user.email,
+        "username": current_user.username,
+        "first_name": current_user.first_name,
+        "last_name": current_user.last_name,
+        "avatar_url": current_user.avatar_url,
+        "role": current_user.role.value if hasattr(current_user.role, "value") else current_user.role,
+        "tier": current_user.tier.value if hasattr(current_user.tier, "value") else current_user.tier,
+        "school": current_user.school,
+        "country": current_user.country,
+        "exam": current_user.exam,
+        "bio": current_user.bio,
+        "goal": current_user.goal,
+        "subscription_expires": current_user.subscription_expires.isoformat() if current_user.subscription_expires else None,
+        "is_active": current_user.is_active,
+        "is_verified": current_user.is_verified,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+    }
+
+    usage = get_ai_usage_today(db, current_user.id)
+
+    plan = db.query(StudyPlan).filter_by(user_id=current_user.id, status="active").first()
+    study_plan = None
+    if plan:
+        study_plan = {
+            "id": plan.id,
+            "plan_json": plan.plan_json,
+            "exam_type": plan.exam_type,
+            "exam_date": plan.exam_date.isoformat() if plan.exam_date else None,
+            "target_score": plan.target_score,
+            "goal": plan.goal,
+            "subjects": plan.subjects,
+            "study_style": plan.study_style,
+            "hours_per_week": plan.hours_per_week,
+            "generated_at": plan.generated_at.isoformat() if plan.generated_at else None,
+            "exam_info": {
+                "exam_type": plan.exam_type,
+                "exam_date": plan.exam_date.isoformat() if plan.exam_date else None,
+            },
+            "plan": plan.plan_json,
+        }
+
+    session = db.query(DailyTutorSession).filter_by(user_id=current_user.id, date=today).first()
+    daily_tutor_today = None
+    if session:
+        lesson = db.query(DailyTutorLesson).filter_by(user_id=current_user.id, date=today).first()
+        quiz = db.query(DailyTutorQuiz).filter_by(user_id=current_user.id, date=today).first()
+        daily_tutor_today = {
+            "id": session.id,
+            "date": session.date.isoformat(),
+            "subject": session.subject,
+            "topic": session.topic,
+            "status": session.status,
+            "currentStep": session.current_step,
+            "answers": session.answers,
+            "result": session.result,
+            "reflection": session.reflection,
+            "lesson": lesson.lesson_json if lesson else None,
+            "quiz": quiz.quiz_json if quiz else None,
+            "started_at": session.started_at.isoformat() if session.started_at else None,
+            "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+        }
+
+    recent_rows = (
+        db.query(DailyTutorSession)
+        .filter_by(user_id=current_user.id, status="completed")
+        .order_by(DailyTutorSession.date.desc())
+        .limit(7)
+        .all()
+    )
+    daily_tutor_recent = [
+        {
+            "id": r.id,
+            "date": r.date.isoformat(),
+            "subject": r.subject,
+            "topic": r.topic,
+            "accuracy": (r.result or {}).get("accuracy") if r.result else None,
+            "status": r.status,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+        }
+        for r in recent_rows
+    ]
+
+    ht = db.query(HyetutorCache).filter_by(user_id=current_user.id, date=today).first()
+    hyetutor_cache = ht.data if ht else None
+
+    stats = db.query(UserStats).filter_by(user_id=current_user.id).first()
+    gamification = {
+        "xp": stats.xp if stats else 0,
+        "total_xp": stats.xp if stats else 0,
+        "level": stats.level if stats else 1,
+        "streak": stats.streak if stats else 0,
+        "longest_streak": stats.streak if stats else 0,
+        "badges": stats.badges if stats and stats.badges else [],
+    }
+
+    mistakes_count = db.query(Mistake).filter_by(user_id=current_user.id, is_resolved=False).count()
+    favs = db.query(DictionaryFavorite).filter_by(user_id=current_user.id).all()
+    favorites = [f.word for f in favs]
+
+    sub = (
+        db.query(Subscription)
+        .filter_by(user_id=current_user.id, is_active=True)
+        .order_by(Subscription.end_date.desc())
+        .first()
+    )
+    days_remaining = 0
+    if sub and sub.end_date:
+        days_remaining = max(0, (sub.end_date.date() - today).days)
+
+    subscription = {
+        "is_active": bool(sub),
+        "plan": sub.plan.value if sub and hasattr(sub.plan, "value") else "Free",
+        "expires_at": sub.end_date.isoformat() if sub and sub.end_date else None,
+        "days_remaining": days_remaining,
+    }
+
+    return {
+        "user": user_resp,
+        "ai_usage": usage,
+        "study_plan": study_plan,
+        "daily_tutor_today": daily_tutor_today,
+        "daily_tutor_recent": daily_tutor_recent,
+        "hyetutor_cache": hyetutor_cache,
+        "gamification": gamification,
+        "mistakes_count": mistakes_count,
+        "favorites": favorites,
+        "subscription": subscription,
     }
