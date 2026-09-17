@@ -115,9 +115,7 @@ class User(Base):
     # DAILY STATS
     daily_stats = relationship("UserDailyStats", back_populates="user", cascade="all, delete-orphan")
 
-    # ============================================================
-    # ⭐ NEW RELATIONSHIPS (Daily Tutor, Career, Study Plan, AI Usage, Mistake Explanations, Weakness)
-    # ============================================================
+    # NEW RELATIONSHIPS
     ai_usage = relationship("AIUsage", back_populates="user", cascade="all, delete-orphan")
     daily_tutor_lessons = relationship("DailyTutorLesson", back_populates="user", cascade="all, delete-orphan")
     daily_tutor_quizzes = relationship("DailyTutorQuiz", back_populates="user", cascade="all, delete-orphan")
@@ -282,7 +280,6 @@ class Mistake(Base):
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # ⭐ NEW — relationship to explanation
     explanation_record = relationship(
         "MistakeExplanation",
         back_populates="mistake",
@@ -349,13 +346,15 @@ class ParentLink(Base):
     __tablename__ = "parent_links"
 
     id = Column(Integer, primary_key=True, index=True)
-    parent_id = Column(Integer, ForeignKey("users.id"))
+    parent_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     child_id = Column(Integer, ForeignKey("users.id"))
     code = Column(String, unique=True, index=True, nullable=False)
     status = Column(String(20), default="pending")
     expires_at = Column(DateTime(timezone=True), nullable=True)
     is_approved = Column(Boolean, default=False)
     approved_at = Column(DateTime(timezone=True), nullable=True)
+    last_viewed_at = Column(DateTime(timezone=True), nullable=True)
+    view_count = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -811,7 +810,7 @@ class UserDailyStats(Base):
 
 
 # ============================================================
-# ⭐ NEW TABLES — AI USAGE, DAILY TUTOR, CAREER, STUDY PLAN, ETC.
+# NEW TABLES — AI USAGE, DAILY TUTOR, CAREER, STUDY PLAN, ETC.
 # ============================================================
 
 class AIUsage(Base):
