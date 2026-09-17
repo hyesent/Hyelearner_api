@@ -412,7 +412,80 @@ class ParentStatusResponse(BaseModel):
 class ChildAnalyticsResponse(BaseModel):
     student: Dict[str, Any]
 
+class ParentViewRequest(BaseModel):
+    code: str = Field(..., min_length=4, max_length=12)
 
+class ParentViewSubject(BaseModel):
+    name: str
+    readiness: float
+
+class ParentViewRecentSession(BaseModel):
+    id: int
+    subject: str
+    topic: Optional[str] = None
+    score: Optional[int] = None
+    total: Optional[int] = None
+    accuracy: Optional[float] = None
+    completed_at: Optional[str] = None
+
+class ParentViewStudyPlan(BaseModel):
+    exam_type: Optional[str] = None
+    exam_date: Optional[str] = None
+    days_remaining: Optional[int] = None
+    on_track: Optional[bool] = None
+    weekly_hours_target: Optional[int] = None
+    weekly_hours_done: Optional[float] = None
+
+class ParentViewSubscription(BaseModel):
+    plan: Optional[str] = None
+    is_active: bool = False
+    expires_at: Optional[str] = None
+
+class ParentViewStudent(BaseModel):
+    id: int
+    name: str
+    first_name: str
+    school: Optional[str] = None
+    exam: Optional[str] = None
+
+    # Activity
+    is_online: bool = False
+    last_login: Optional[str] = None
+    last_activity: Optional[str] = None
+
+    # Core stats
+    level: int = 1
+    streak: int = 0
+    accuracy: float = 0.0
+
+    # Study time (hours)
+    study_today: float = 0.0
+    study_week: float = 0.0
+    study_month: float = 0.0
+
+    # Breakdowns
+    subjects: List[ParentViewSubject] = []
+    recent_sessions: List[ParentViewRecentSession] = []
+
+    # Achievements
+    badges: List[str] = []
+    duel_wins: int = 0
+    duel_losses: int = 0
+
+    # Attention signals
+    unresolved_mistakes: int = 0
+    has_studied_today: bool = False
+    weak_subjects: List[str] = []
+
+    # Optional
+    study_plan: Optional[ParentViewStudyPlan] = None
+    subscription: Optional[ParentViewSubscription] = None
+
+
+class ParentViewResponse(BaseModel):
+    success: bool = True
+    student: ParentViewStudent
+    
 # ============================================================
 # DUEL SCHEMAS
 # ============================================================
