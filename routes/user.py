@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, cast, Date as SQLDate
 from typing import List, Optional
 from datetime import datetime, date, timedelta
 import base64
@@ -15,6 +15,16 @@ from dependencies import get_current_user, get_ai_usage_today
 from auth import get_password_hash, verify_password
 
 router = APIRouter()
+
+
+# ============================================================
+# LEVEL HELPER
+# ============================================================
+
+def compute_level_from_xp(xp: int) -> int:
+    if xp < 1000:
+        return xp // 100 + 1
+    return 10 + (xp - 1000) // 200
 
 
 # ============================================================
@@ -185,7 +195,7 @@ async def get_user_stats(
             "wrong": stats.wrong,
             "studyTime": stats.study_time_minutes,
             "fromCache": True,
-            "cachedAt": stats.updated_at.isoformat()
+            "cachedAt": stats.updated_at.isoformat() if stats.updated_at else None
         }
 
     return await compute_user_stats(current_user.id, db)
@@ -237,7 +247,7 @@ async def compute_user_stats(user_id: int, db: Session):
 
 
 # ============================================================
-# DAILY STATS — SAVE
+# ⭐ DAILY STATS — SAVE (now delta-aware + updates user_stats)
 # ============================================================
 
 @router.post("/stats")
@@ -246,8 +256,88 @@ async def save_user_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Accepts either:
+      - delta form:  { xp_delta, sessions_delta, questions_delta,
+                       correct_delta, wrong_delta, minutes_delta, streak }
+      - absolute form (legacy): { xp, level, streak, accuracy, sessions,
+                                   totalQuestions, correct, wrong, studyTime }
+
+    Delta form increments UserStats + UserDailyStats (source of truth for leaderboard).
+    Absolute form is treated as a full overwrite of today's UserDailyStats only.
+    """
     today = date.today()
 
+    has_delta = any(
+        k in stats_data for k in (
+            "xp_delta", "sessions_delta", "questions_delta",
+            "correct_delta", "wrong_delta", "minutes_delta"
+        )
+    )
+
+    # ── DELTA MODE ──
+    if has_delta:
+        xp_delta = int(stats_data.get("xp_delta", 0) or 0)
+        sessions_delta = int(stats_data.get("sessions_delta", 0) or 0)
+        questions_delta = int(stats_data.get("questions_delta", 0) or 0)
+        correct_delta = int(stats_data.get("correct_delta", 0) or 0)
+        wrong_delta = int(stats_data.get("wrong_delta", 0) or 0)
+        minutes_delta = int(stats_data.get("minutes_delta", 0) or 0)
+        streak_value = stats_data.get("streak", None)
+
+        # UserStats — lifetime totals
+        stats = db.query(UserStats).filter_by(user_id=current_user.id).first()
+        if not stats:
+            stats = UserStats(user_id=current_user.id)
+            db.add(stats)
+            db.flush()
+
+        stats.xp = (stats.xp or 0) + xp_delta
+        stats.level = compute_level_from_xp(stats.xp)
+        stats.total_sessions = (stats.total_sessions or 0) + sessions_delta
+        stats.total_questions = (stats.total_questions or 0) + questions_delta
+        stats.total_correct = (stats.total_correct or 0) + correct_delta
+        if stats.total_questions > 0:
+            stats.accuracy = round((stats.total_correct / stats.total_questions) * 100, 2)
+        if streak_value is not None:
+            stats.streak = int(streak_value)
+        stats.last_activity = datetime.utcnow()
+
+        # UserDailyStats — today
+        daily = db.query(UserDailyStats).filter_by(
+            user_id=current_user.id, date=today
+        ).first()
+        if not daily:
+            daily = UserDailyStats(user_id=current_user.id, date=today)
+            db.add(daily)
+            db.flush()
+
+        daily.xp = (daily.xp or 0) + xp_delta
+        daily.sessions = (daily.sessions or 0) + sessions_delta
+        daily.total_questions = (daily.total_questions or 0) + questions_delta
+        daily.correct = (daily.correct or 0) + correct_delta
+        daily.wrong = (daily.wrong or 0) + wrong_delta
+        daily.study_time_minutes = (daily.study_time_minutes or 0) + minutes_delta
+        daily.level = stats.level
+        if streak_value is not None:
+            daily.streak = int(streak_value)
+        if daily.total_questions > 0:
+            daily.accuracy = round((daily.correct / daily.total_questions) * 100, 2)
+        daily.updated_at = datetime.utcnow()
+
+        db.commit()
+
+        return {
+            "success": True,
+            "date": today.isoformat(),
+            "saved": True,
+            "mode": "delta",
+            "xp": stats.xp,
+            "level": stats.level,
+            "accuracy": stats.accuracy,
+        }
+
+    # ── ABSOLUTE MODE (legacy) — overwrite today's UserDailyStats ──
     stats = db.query(UserDailyStats).filter(
         UserDailyStats.user_id == current_user.id,
         UserDailyStats.date == today
@@ -285,7 +375,8 @@ async def save_user_stats(
     return {
         "success": True,
         "date": today.isoformat(),
-        "saved": True
+        "saved": True,
+        "mode": "absolute",
     }
 
 
@@ -519,9 +610,9 @@ async def hydrate(
     db: Session = Depends(get_db),
 ):
     from models import (
-        Subscription, StudyPlan,
+        StudyPlan,
         DailyTutorSession, DailyTutorLesson, DailyTutorQuiz,
-        HyetutorCache, Mistake, DictionaryFavorite,
+        HyetutorCache, Mistake, DictionaryFavorite, WeaknessSnapshot,
     )
 
     today = date.today()
@@ -627,22 +718,25 @@ async def hydrate(
     favs = db.query(DictionaryFavorite).filter_by(user_id=current_user.id).all()
     favorites = [f.word for f in favs]
 
-    sub = (
-        db.query(Subscription)
-        .filter_by(user_id=current_user.id, is_active=True)
-        .order_by(Subscription.end_date.desc())
+    # ⭐ Today's weakness snapshot
+    weakness_row = (
+        db.query(WeaknessSnapshot)
+        .filter(
+            WeaknessSnapshot.user_id == current_user.id,
+            cast(WeaknessSnapshot.generated_at, SQLDate) == today,
+        )
+        .order_by(WeaknessSnapshot.generated_at.desc())
         .first()
     )
-    days_remaining = 0
-    if sub and sub.end_date:
-        days_remaining = max(0, (sub.end_date.date() - today).days)
-
-    subscription = {
-        "is_active": bool(sub),
-        "plan": sub.plan.value if sub and hasattr(sub.plan, "value") else "Free",
-        "expires_at": sub.end_date.isoformat() if sub and sub.end_date else None,
-        "days_remaining": days_remaining,
-    }
+    weakness_today = None
+    if weakness_row:
+        raw_snap = weakness_row.snapshot_json
+        snap_list = raw_snap if isinstance(raw_snap, list) else []
+        weakness_today = {
+            "weakTopics": snap_list,
+            "summary": weakness_row.summary or "",
+            "generatedAt": weakness_row.generated_at.isoformat() if weakness_row.generated_at else None,
+        }
 
     return {
         "user": user_resp,
@@ -654,5 +748,5 @@ async def hydrate(
         "gamification": gamification,
         "mistakes_count": mistakes_count,
         "favorites": favorites,
-        "subscription": subscription,
+        "weakness_today": weakness_today,
     }
