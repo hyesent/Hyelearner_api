@@ -1324,6 +1324,17 @@ class UserStatsUpdate(BaseModel):
     studyTime: Optional[int] = None
 
 
+class UserStatsDelta(BaseModel):
+    """Delta form — additive increments for cross-device correctness."""
+    xp_delta: int = 0
+    sessions_delta: int = 0
+    questions_delta: int = 0
+    correct_delta: int = 0
+    wrong_delta: int = 0
+    minutes_delta: int = 0
+    streak: Optional[int] = None
+
+
 class UserStatsSaveResponse(BaseModel):
     success: bool
     date: str
@@ -1556,7 +1567,7 @@ class SavedMistakeExplanationResponse(BaseModel):
 
 class WeaknessSnapshotResponse(BaseModel):
     id: int
-    snapshot_json: Dict[str, Any]
+    snapshot_json: List[Dict[str, Any]]
     summary: Optional[str]
     generated_at: datetime
 
@@ -1565,6 +1576,12 @@ class WeaknessSnapshotResponse(BaseModel):
 
 class WeaknessHistoryResponse(BaseModel):
     snapshots: List[WeaknessSnapshotResponse] = []
+
+
+class WeaknessTodaySnapshot(BaseModel):
+    weakTopics: Optional[List[Dict[str, Any]]] = None
+    summary: Optional[str] = None
+    generatedAt: Optional[str] = None
 
 
 # ============================================================
@@ -1655,7 +1672,7 @@ class DictionaryRecentAdd(BaseModel):
 
 
 # ============================================================
-#  NEW — HYDRATE (the big one)
+# HYDRATE (the big one)
 # ============================================================
 
 class GamificationSnapshot(BaseModel):
@@ -1665,13 +1682,6 @@ class GamificationSnapshot(BaseModel):
     streak: int = 0
     longest_streak: int = 0
     badges: List[str] = []
-
-
-class SubscriptionSnapshot(BaseModel):
-    is_active: bool = False
-    plan: str = "Free"
-    expires_at: Optional[datetime] = None
-    days_remaining: int = 0
 
 
 class HydrateResponse(BaseModel):
@@ -1684,4 +1694,4 @@ class HydrateResponse(BaseModel):
     gamification: GamificationSnapshot
     mistakes_count: int = 0
     favorites: List[str] = []
-    subscription: SubscriptionSnapshot
+    weakness_today: Optional[WeaknessTodaySnapshot] = None
