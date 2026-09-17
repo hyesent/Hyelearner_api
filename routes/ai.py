@@ -6,8 +6,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import cast, Date as SQLDate
 from typing import Optional, List, Dict
-from datetime import datetime
+from datetime import datetime, date as date_cls
 from pydantic import BaseModel
 
 from database import get_db
@@ -84,7 +85,6 @@ async def get_ai_explanation(
     Cached per mistake_id if provided — never regenerates for the same mistake.
     """
 
-    # If mistake_id given and cached, return cached
     if request.mistakeId:
         existing = (
             db.query(MistakeExplanation)
@@ -100,7 +100,6 @@ async def get_ai_explanation(
         "correct_answer": request.correctAnswer or "Unknown",
     }
 
-    # Run under daily limit
     result = await call_ai_with_limit(
         db,
         current_user.id,
@@ -109,7 +108,6 @@ async def get_ai_explanation(
         user_answer=request.userAnswer,
     )
 
-    # Save explanation to cache if tied to a mistake
     if request.mistakeId:
         try:
             db.add(MistakeExplanation(
@@ -132,7 +130,7 @@ async def get_ai_explanation(
 
 
 # ============================================================
-# 2. AI WEAKNESS ANALYSIS
+# 2. AI WEAKNESS ANALYSIS — ⭐ 1/day, cached
 # ============================================================
 
 @router.post("/weakness")
@@ -142,8 +140,34 @@ async def get_weakness_analysis(
     db: Session = Depends(get_db),
 ):
     """
-    AI weakness analysis. Saves a snapshot to weakness_snapshots.
+    AI weakness analysis. One snapshot per user per day.
+    Returns cached snapshot if already generated today.
     """
+    today = date_cls.today()
+
+    # ── 1. Already did it today? ──
+    existing = (
+        db.query(WeaknessSnapshot)
+        .filter(
+            WeaknessSnapshot.user_id == current_user.id,
+            cast(WeaknessSnapshot.generated_at, SQLDate) == today,
+        )
+        .order_by(WeaknessSnapshot.generated_at.desc())
+        .first()
+    )
+    if existing:
+        raw = existing.snapshot_json
+        snapshot_list = raw if isinstance(raw, list) else []
+        return {
+            "weakTopics": snapshot_list,
+            "summary": existing.summary or "",
+            "createdAt": existing.generated_at.isoformat() if existing.generated_at else None,
+            "totalMistakes": 0,
+            "topicsAnalyzed": len(snapshot_list),
+            "from_cache": True,
+        }
+
+    # ── 2. Build input ──
     mistakes_data = request.mistakes
     mastery_data = request.mastery or {}
 
@@ -164,6 +188,7 @@ async def get_weakness_analysis(
                 "createdAt": datetime.utcnow().isoformat(),
                 "totalMistakes": 0,
                 "topicsAnalyzed": 0,
+                "from_cache": False,
             }
 
         mistakes_data = [
@@ -194,7 +219,7 @@ async def get_weakness_analysis(
                 for m in db_mastery
             }
 
-    # Run under daily limit
+    # ── 3. AI call under limit ──
     result = await call_ai_with_limit(
         db,
         current_user.id,
@@ -209,7 +234,7 @@ async def get_weakness_analysis(
     high_priority = [t for t in result if t.get("priority") == "High"]
     summary = f"Found {len(result)} areas to improve. Focus on {len(high_priority)} high-priority topics first."
 
-    # Save snapshot
+    # ── 4. Save snapshot ──
     try:
         db.add(WeaknessSnapshot(
             user_id=current_user.id,
@@ -227,6 +252,7 @@ async def get_weakness_analysis(
         "createdAt": datetime.utcnow().isoformat(),
         "totalMistakes": len(mistakes_data),
         "topicsAnalyzed": len(result),
+        "from_cache": False,
     }
 
 
@@ -274,12 +300,6 @@ async def generate_study_plan_v2(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Premium study plan generation. Also persists to study_plans.
-    Blocks regeneration while an active plan exists.
-    """
-
-    # Check for existing active plan
     existing = (
         db.query(StudyPlan)
         .filter_by(user_id=current_user.id, status="active")
@@ -319,7 +339,6 @@ async def generate_study_plan_v2(
         "goal": request.goal,
     }
 
-    # 1. Build the plan skeleton (no AI)
     generator = StudyPlanGenerator(
         user_data=user_data,
         weak_topics=weak_topics,
@@ -328,7 +347,6 @@ async def generate_study_plan_v2(
     )
     plan = generator.generate_plan()
 
-    # 2. AI enhancement — this is the only AI call
     ai_insights = await call_ai_with_limit(
         db,
         current_user.id,
@@ -338,11 +356,9 @@ async def generate_study_plan_v2(
         weak_topics=weak_topics,
     )
 
-    # 3. Persist as active plan
     exam_date_val = None
     if request.exam_date:
         try:
-            from datetime import date as date_cls
             exam_date_val = date_cls.fromisoformat(request.exam_date)
         except Exception:
             exam_date_val = None
@@ -484,7 +500,6 @@ async def course_finder_check(
         subjects=request.subjects,
     )
 
-    # Persist to career_checks
     try:
         db.add(CareerCheck(
             user_id=current_user.id,
