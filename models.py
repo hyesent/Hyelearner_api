@@ -1,10 +1,10 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, JSON, ForeignKey, Enum, Index, Date
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, JSON, ForeignKey, Enum, Index, Date, Numeric, BigInteger, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
 import enum
 import uuid
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.dialects.postgresql import UUID as PGUUID, JSONB
 
 
 # ============================================================
@@ -27,7 +27,7 @@ class SubscriptionPlan(str, enum.Enum):
     FREE = "free"
     PREMIUM = "premium"
     FOUNDATION = "foundation"
-    
+
 class Difficulty(str, enum.Enum):
     EASY = "easy"
     MEDIUM = "medium"
@@ -86,17 +86,13 @@ class User(Base):
     referrals_received = relationship("Referral", foreign_keys="Referral.referred_id")
     duels_challenged = relationship("Duel", foreign_keys="Duel.challenger_id")
     duels_opponent = relationship("Duel", foreign_keys="Duel.opponent_id")
-    
-    # ============================================================
-    # HYETUTOR RELATIONSHIPS
-    # ============================================================
+
+    # HYETUTOR
     hyetutor_caches = relationship("HyetutorCache", back_populates="user", cascade="all, delete-orphan")
     missions = relationship("Mission", back_populates="user", cascade="all, delete-orphan")
     reflections = relationship("Reflection", back_populates="user", cascade="all, delete-orphan")
 
-    # ============================================================
-    # SOCIAL RELATIONSHIPS
-    # ============================================================
+    # SOCIAL
     friend_requests_sent = relationship("FriendRequest", foreign_keys="FriendRequest.sender_id", back_populates="sender")
     friend_requests_received = relationship("FriendRequest", foreign_keys="FriendRequest.receiver_id", back_populates="receiver")
     friendships = relationship("Friendship", foreign_keys="Friendship.user_id", back_populates="user")
@@ -112,16 +108,26 @@ class User(Base):
     challenges_created = relationship("Challenge", back_populates="creator")
     challenge_participants = relationship("ChallengeParticipant", back_populates="user")
 
-    # ============================================================
-    # FEEDBACK & CONTRIBUTIONS RELATIONSHIPS (FIXED)
-    # ============================================================
+    # FEEDBACK & CONTRIBUTIONS
     feedback = relationship("Feedback", foreign_keys="Feedback.user_id", back_populates="user", cascade="all, delete-orphan")
     contributions = relationship("Contribution", foreign_keys="Contribution.user_id", back_populates="user", cascade="all, delete-orphan")
 
-    # ============================================================
-    # DAILY STATS RELATIONSHIP
-    # ============================================================
+    # DAILY STATS
     daily_stats = relationship("UserDailyStats", back_populates="user", cascade="all, delete-orphan")
+
+    # ============================================================
+    # ⭐ NEW RELATIONSHIPS (Daily Tutor, Career, Study Plan, AI Usage, Mistake Explanations, Weakness)
+    # ============================================================
+    ai_usage = relationship("AIUsage", back_populates="user", cascade="all, delete-orphan")
+    daily_tutor_lessons = relationship("DailyTutorLesson", back_populates="user", cascade="all, delete-orphan")
+    daily_tutor_quizzes = relationship("DailyTutorQuiz", back_populates="user", cascade="all, delete-orphan")
+    daily_tutor_sessions = relationship("DailyTutorSession", back_populates="user", cascade="all, delete-orphan")
+    career_checks = relationship("CareerCheck", back_populates="user", cascade="all, delete-orphan")
+    study_plans = relationship("StudyPlan", back_populates="user", cascade="all, delete-orphan")
+    weakness_snapshots = relationship("WeaknessSnapshot", back_populates="user", cascade="all, delete-orphan")
+    hyetutor_chats = relationship("HyetutorChat", back_populates="user", cascade="all, delete-orphan")
+    dictionary_favorites = relationship("DictionaryFavorite", back_populates="user", cascade="all, delete-orphan")
+    dictionary_recent = relationship("DictionaryRecent", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserSettings(Base):
@@ -276,6 +282,14 @@ class Mistake(Base):
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # ⭐ NEW — relationship to explanation
+    explanation_record = relationship(
+        "MistakeExplanation",
+        back_populates="mistake",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
     user = relationship("User", back_populates="mistakes")
 
     __table_args__ = (
@@ -338,12 +352,12 @@ class ParentLink(Base):
     parent_id = Column(Integer, ForeignKey("users.id"))
     child_id = Column(Integer, ForeignKey("users.id"))
     code = Column(String, unique=True, index=True, nullable=False)
-    status = Column(String(20), default="pending")  
-    expires_at = Column(DateTime(timezone=True), nullable=True)  
+    status = Column(String(20), default="pending")
+    expires_at = Column(DateTime(timezone=True), nullable=True)
     is_approved = Column(Boolean, default=False)
     approved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())  
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     parent = relationship("User", foreign_keys=[parent_id])
     child = relationship("User", foreign_keys=[child_id])
@@ -415,27 +429,27 @@ class Referral(Base):
 
 class HyetutorCache(Base):
     __tablename__ = "hyetutor_cache"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
     data = Column(JSON, nullable=False)
     generated_at = Column(DateTime(timezone=True), default=func.now())
-    
-    # Relationships
+
     user = relationship("User", back_populates="hyetutor_caches")
-    
+
     __table_args__ = (
         Index('idx_hyetutor_cache_user_date', 'user_id', 'date'),
+        UniqueConstraint('user_id', 'date', name='uq_hyetutor_cache_user_date'),
     )
-    
+
     def __repr__(self):
         return f"<HyetutorCache user={self.user_id} date={self.date}>"
 
 
 class Mission(Base):
     __tablename__ = "missions"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
@@ -449,23 +463,22 @@ class Mission(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), default=func.now())
-    
-    # Relationships
+
     user = relationship("User", back_populates="missions")
-    
+
     __table_args__ = (
         Index('idx_mission_user_date', 'user_id', 'date'),
         Index('idx_mission_code', 'mission_code'),
         Index('idx_mission_completed', 'completed'),
     )
-    
+
     def __repr__(self):
         return f"<Mission user={self.user_id} date={self.date} completed={self.completed}>"
 
 
 class Reflection(Base):
     __tablename__ = "reflections"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
@@ -475,14 +488,13 @@ class Reflection(Base):
     sessions_completed = Column(Integer, default=0)
     distractions = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), default=func.now())
-    
-    # Relationships
+
     user = relationship("User", back_populates="reflections")
-    
+
     __table_args__ = (
         Index('idx_reflection_user_date', 'user_id', 'date'),
     )
-    
+
     def __repr__(self):
         return f"<Reflection user={self.user_id} date={self.date} mood={self.mood}>"
 
@@ -493,53 +505,45 @@ class Reflection(Base):
 
 class FriendRequest(Base):
     __tablename__ = "friend_requests"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     receiver_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    status = Column(String(20), default="pending")  # pending, accepted, rejected
+    status = Column(String(20), default="pending")
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationships
+
     sender = relationship("User", foreign_keys=[sender_id], back_populates="friend_requests_sent")
     receiver = relationship("User", foreign_keys=[receiver_id], back_populates="friend_requests_received")
-    
+
     __table_args__ = (
         Index('idx_friend_requests_sender', 'sender_id'),
         Index('idx_friend_requests_receiver', 'receiver_id'),
         Index('idx_friend_requests_status', 'status'),
     )
-    
-    def __repr__(self):
-        return f"<FriendRequest sender={self.sender_id} receiver={self.receiver_id} status={self.status}>"
 
 
 class Friendship(Base):
     __tablename__ = "friendships"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     friend_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), default=func.now())
-    
-    # Relationships
+
     user = relationship("User", foreign_keys=[user_id], back_populates="friendships")
     friend_user = relationship("User", foreign_keys=[friend_id], back_populates="friends")
-    
+
     __table_args__ = (
         Index('idx_friendships_user', 'user_id'),
         Index('idx_friendships_friend', 'friend_id'),
         Index('idx_friendships_user_friend', 'user_id', 'friend_id', unique=True),
     )
-    
-    def __repr__(self):
-        return f"<Friendship user={self.user_id} friend={self.friend_id}>"
 
 
 class Message(Base):
     __tablename__ = "messages"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     receiver_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -549,26 +553,22 @@ class Message(Base):
     parent_message_id = Column(Integer, ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationships
+
     sender = relationship("User", foreign_keys=[sender_id], back_populates="messages_sent")
     receiver = relationship("User", foreign_keys=[receiver_id], back_populates="messages_received")
     parent = relationship("Message", remote_side=[id], foreign_keys=[parent_message_id])
-    
+
     __table_args__ = (
         Index('idx_messages_sender', 'sender_id'),
         Index('idx_messages_receiver', 'receiver_id'),
         Index('idx_messages_conversation', 'sender_id', 'receiver_id'),
         Index('idx_messages_read', 'is_read'),
     )
-    
-    def __repr__(self):
-        return f"<Message sender={self.sender_id} receiver={self.receiver_id} read={self.is_read}>"
 
 
 class DuelInvite(Base):
     __tablename__ = "duel_invites"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     receiver_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -576,31 +576,27 @@ class DuelInvite(Base):
     topic = Column(String(100), nullable=True)
     question_count = Column(Integer, default=10)
     time_limit = Column(Integer, default=300)
-    status = Column(String(20), default="pending")  # pending, accepted, rejected, expired
+    status = Column(String(20), default="pending")
     duel_id = Column(Integer, ForeignKey("duels.id", ondelete="SET NULL"), nullable=True)
     invited_at = Column(DateTime(timezone=True), default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationships
+
     sender = relationship("User", foreign_keys=[sender_id], back_populates="duel_invites_sent")
     receiver = relationship("User", foreign_keys=[receiver_id], back_populates="duel_invites_received")
     duel = relationship("Duel", foreign_keys=[duel_id])
-    
+
     __table_args__ = (
         Index('idx_duel_invites_sender', 'sender_id'),
         Index('idx_duel_invites_receiver', 'receiver_id'),
         Index('idx_duel_invites_status', 'status'),
     )
-    
-    def __repr__(self):
-        return f"<DuelInvite sender={self.sender_id} receiver={self.receiver_id} status={self.status}>"
 
 
 class StudyGroup(Base):
     __tablename__ = "study_groups"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
@@ -612,48 +608,40 @@ class StudyGroup(Base):
     pinned_message_id = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationships
+
     creator = relationship("User", foreign_keys=[created_by], back_populates="groups_created")
     members = relationship("StudyGroupMember", back_populates="group", cascade="all, delete-orphan")
     messages = relationship("StudyGroupMessage", back_populates="group", cascade="all, delete-orphan")
-    
+
     __table_args__ = (
         Index('idx_study_groups_subject', 'subject'),
         Index('idx_study_groups_invite_code', 'invite_code'),
     )
-    
-    def __repr__(self):
-        return f"<StudyGroup id={self.id} name={self.name} members={len(self.members)}>"
 
 
 class StudyGroupMember(Base):
     __tablename__ = "study_group_members"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     group_id = Column(Integer, ForeignKey("study_groups.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    role = Column(String(20), default="member")  # admin, moderator, member
+    role = Column(String(20), default="member")
     joined_at = Column(DateTime(timezone=True), default=func.now())
     last_read_at = Column(DateTime(timezone=True), default=func.now())
-    
-    # Relationships
+
     group = relationship("StudyGroup", back_populates="members")
     user = relationship("User", back_populates="group_memberships")
-    
+
     __table_args__ = (
         Index('idx_group_members_group', 'group_id'),
         Index('idx_group_members_user', 'user_id'),
         Index('idx_group_members_group_user', 'group_id', 'user_id', unique=True),
     )
-    
-    def __repr__(self):
-        return f"<StudyGroupMember group={self.group_id} user={self.user_id} role={self.role}>"
 
 
 class StudyGroupMessage(Base):
     __tablename__ = "study_group_messages"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     group_id = Column(Integer, ForeignKey("study_groups.id", ondelete="CASCADE"), nullable=False)
     sender_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -663,92 +651,76 @@ class StudyGroupMessage(Base):
     parent_message_id = Column(Integer, ForeignKey("study_group_messages.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationships
+
     group = relationship("StudyGroup", back_populates="messages")
     sender = relationship("User", back_populates="group_messages")
     parent = relationship("StudyGroupMessage", remote_side=[id], foreign_keys=[parent_message_id])
-    
+
     __table_args__ = (
         Index('idx_group_messages_group', 'group_id'),
         Index('idx_group_messages_pinned', 'is_pinned'),
         Index('idx_group_messages_announcement', 'is_announcement'),
     )
-    
-    def __repr__(self):
-        return f"<StudyGroupMessage group={self.group_id} sender={self.sender_id} pinned={self.is_pinned}>"
 
 
 class Challenge(Base):
     __tablename__ = "challenges"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     creator_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    type = Column(String(30), nullable=False)  # streak, questions, accuracy, xp
-    duration = Column(Integer, default=7)  # days
+    type = Column(String(30), nullable=False)
+    duration = Column(Integer, default=7)
     stake = Column(String(50), nullable=True)
-    status = Column(String(20), default="active")  # active, completed, cancelled
+    status = Column(String(20), default="active")
     starts_at = Column(DateTime(timezone=True), default=func.now())
     ends_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationships
+
     creator = relationship("User", foreign_keys=[creator_id], back_populates="challenges_created")
     participants = relationship("ChallengeParticipant", back_populates="challenge", cascade="all, delete-orphan")
-    
+
     __table_args__ = (
         Index('idx_challenges_type', 'type'),
         Index('idx_challenges_status', 'status'),
     )
-    
-    def __repr__(self):
-        return f"<Challenge id={self.id} type={self.type} status={self.status}>"
 
 
 class ChallengeParticipant(Base):
     __tablename__ = "challenge_participants"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     challenge_id = Column(Integer, ForeignKey("challenges.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     joined_at = Column(DateTime(timezone=True), default=func.now())
-    
-    # Relationships
+
     challenge = relationship("Challenge", back_populates="participants")
     user = relationship("User", back_populates="challenge_participants")
-    
+
     __table_args__ = (
         Index('idx_challenge_participants_challenge', 'challenge_id'),
         Index('idx_challenge_participants_user', 'user_id'),
         Index('idx_challenge_participants_challenge_user', 'challenge_id', 'user_id', unique=True),
     )
-    
-    def __repr__(self):
-        return f"<ChallengeParticipant challenge={self.challenge_id} user={self.user_id}>"
 
 
 class Activity(Base):
     __tablename__ = "activities"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    type = Column(String(30), nullable=False)  # session, streak, level_up, duel, message, group, challenge
+    type = Column(String(30), nullable=False)
     message = Column(String(255), nullable=True)
     data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), default=func.now())
-    
-    # Relationships
+
     user = relationship("User", back_populates="activities")
-    
+
     __table_args__ = (
         Index('idx_activities_user', 'user_id'),
         Index('idx_activities_type', 'type'),
         Index('idx_activities_created', 'created_at'),
     )
-    
-    def __repr__(self):
-        return f"<Activity user={self.user_id} type={self.type}>"
 
 
 # ============================================================
@@ -757,31 +729,27 @@ class Activity(Base):
 
 class Feedback(Base):
     __tablename__ = "feedback"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    type = Column(String(20), default="general")  # general, bug, feature, improvement
+    type = Column(String(20), default="general")
     message = Column(Text, nullable=False)
-    rating = Column(Integer, nullable=True)  # 1-5
+    rating = Column(Integer, nullable=True)
     email = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=func.now())
-    
-    # Relationships
+
     user = relationship("User", foreign_keys=[user_id], back_populates="feedback")
-    
+
     __table_args__ = (
         Index('idx_feedback_user', 'user_id'),
         Index('idx_feedback_type', 'type'),
         Index('idx_feedback_created', 'created_at'),
     )
-    
-    def __repr__(self):
-        return f"<Feedback id={self.id} type={self.type} user={self.user_id}>"
 
 
 class Contribution(Base):
     __tablename__ = "contributions"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     university = Column(String(100), nullable=False)
@@ -798,12 +766,11 @@ class Contribution(Base):
     rejection_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationships
+
     user = relationship("User", foreign_keys=[user_id], back_populates="contributions")
     approver = relationship("User", foreign_keys=[approved_by])
     rejecter = relationship("User", foreign_keys=[rejected_by])
-    
+
     __table_args__ = (
         Index('idx_contribution_user', 'user_id'),
         Index('idx_contribution_status', 'status'),
@@ -811,9 +778,6 @@ class Contribution(Base):
         Index('idx_contribution_exam_type', 'exam_type'),
         Index('idx_contribution_created', 'created_at'),
     )
-    
-    def __repr__(self):
-        return f"<Contribution id={self.id} university={self.university} course={self.course} status={self.status}>"
 
 
 # ============================================================
@@ -822,7 +786,7 @@ class Contribution(Base):
 
 class UserDailyStats(Base):
     __tablename__ = "user_daily_stats"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
@@ -837,14 +801,228 @@ class UserDailyStats(Base):
     study_time_minutes = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationships
+
     user = relationship("User", back_populates="daily_stats")
-    
+
     __table_args__ = (
         Index('idx_user_daily_stats_user_date', 'user_id', 'date'),
         Index('idx_user_daily_stats_date', 'date'),
     )
-    
-    def __repr__(self):
-        return f"<UserDailyStats user={self.user_id} date={self.date} xp={self.xp}>"
+
+
+# ============================================================
+# ⭐ NEW TABLES — AI USAGE, DAILY TUTOR, CAREER, STUDY PLAN, ETC.
+# ============================================================
+
+class AIUsage(Base):
+    __tablename__ = "ai_usage"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    date = Column(Date, nullable=False, default=func.current_date())
+    count = Column(Integer, nullable=False, default=0)
+    failed_count = Column(Integer, nullable=False, default=0)
+    last_attempt_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="ai_usage")
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'date', name='uq_ai_usage_user_date'),
+        Index('idx_ai_usage_user_date', 'user_id', 'date'),
+    )
+
+
+class DailyTutorLesson(Base):
+    __tablename__ = "daily_tutor_lessons"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    date = Column(Date, nullable=False, default=func.current_date())
+    subject = Column(String, nullable=False)
+    topic = Column(String, nullable=False)
+    lesson_json = Column(JSONB, nullable=False)
+    generated_at = Column(DateTime(timezone=True), default=func.now())
+
+    user = relationship("User", back_populates="daily_tutor_lessons")
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'date', name='uq_daily_tutor_lessons_user_date'),
+        Index('idx_daily_tutor_lessons_user_date', 'user_id', 'date'),
+    )
+
+
+class DailyTutorQuiz(Base):
+    __tablename__ = "daily_tutor_quizzes"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    date = Column(Date, nullable=False, default=func.current_date())
+    lesson_id = Column(BigInteger, ForeignKey("daily_tutor_lessons.id", ondelete="CASCADE"), nullable=True)
+    subject = Column(String, nullable=False)
+    topic = Column(String, nullable=False)
+    quiz_json = Column(JSONB, nullable=False)
+    generated_at = Column(DateTime(timezone=True), default=func.now())
+
+    user = relationship("User", back_populates="daily_tutor_quizzes")
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'date', name='uq_daily_tutor_quizzes_user_date'),
+        Index('idx_daily_tutor_quizzes_user_date', 'user_id', 'date'),
+    )
+
+
+class DailyTutorSession(Base):
+    __tablename__ = "daily_tutor_sessions"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    date = Column(Date, nullable=False, default=func.current_date())
+    lesson_id = Column(BigInteger, ForeignKey("daily_tutor_lessons.id", ondelete="SET NULL"), nullable=True)
+    quiz_id = Column(BigInteger, ForeignKey("daily_tutor_quizzes.id", ondelete="SET NULL"), nullable=True)
+    subject = Column(String, nullable=False)
+    topic = Column(String, nullable=False)
+    answers = Column(JSONB, nullable=True)
+    result = Column(JSONB, nullable=True)
+    reflection = Column(JSONB, nullable=True)
+    status = Column(String, nullable=False, default="in_progress")
+    current_step = Column(String, nullable=False, default="lesson")
+    started_at = Column(DateTime(timezone=True), default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", back_populates="daily_tutor_sessions")
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'date', name='uq_daily_tutor_sessions_user_date'),
+        Index('idx_daily_tutor_sessions_user_date', 'user_id', 'date'),
+        Index('idx_daily_tutor_sessions_status', 'user_id', 'status'),
+    )
+
+
+class MistakeExplanation(Base):
+    __tablename__ = "mistake_explanations"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    mistake_id = Column(Integer, ForeignKey("mistakes.id", ondelete="CASCADE"), nullable=False, unique=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    explanation_json = Column(JSONB, nullable=False)
+    generated_at = Column(DateTime(timezone=True), default=func.now())
+
+    mistake = relationship("Mistake", back_populates="explanation_record")
+
+    __table_args__ = (
+        Index('idx_mistake_explanations_user', 'user_id'),
+    )
+
+
+class WeaknessSnapshot(Base):
+    __tablename__ = "weakness_snapshots"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    snapshot_json = Column(JSONB, nullable=False)
+    summary = Column(Text, nullable=True)
+    generated_at = Column(DateTime(timezone=True), default=func.now())
+
+    user = relationship("User", back_populates="weakness_snapshots")
+
+    __table_args__ = (
+        Index('idx_weakness_snapshots_user_date', 'user_id', 'generated_at'),
+    )
+
+
+class HyetutorChat(Base):
+    __tablename__ = "hyetutor_chat"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
+    confidence = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+
+    user = relationship("User", back_populates="hyetutor_chats")
+
+    __table_args__ = (
+        Index('idx_hyetutor_chat_user_date', 'user_id', 'created_at'),
+    )
+
+
+class CareerCheck(Base):
+    __tablename__ = "career_checks"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    university = Column(String, nullable=False)
+    country = Column(String, nullable=False)
+    course = Column(String, nullable=False)
+    score = Column(Numeric, nullable=True)
+    score_type = Column(String, nullable=True)
+    subjects = Column(JSONB, nullable=True)
+    status = Column(String, nullable=True)
+    chance_percentage = Column(Integer, nullable=True)
+    result_json = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+
+    user = relationship("User", back_populates="career_checks")
+
+    __table_args__ = (
+        Index('idx_career_checks_user_date', 'user_id', 'created_at'),
+        Index('idx_career_checks_user_course', 'user_id', 'university', 'course'),
+    )
+
+
+class StudyPlan(Base):
+    __tablename__ = "study_plans"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    plan_json = Column(JSONB, nullable=False)
+    exam_type = Column(String, nullable=True)
+    exam_date = Column(Date, nullable=True)
+    target_score = Column(String, nullable=True)
+    goal = Column(Text, nullable=True)
+    subjects = Column(JSONB, nullable=True)
+    study_style = Column(String, nullable=True)
+    hours_per_week = Column(Integer, nullable=True)
+    generated_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
+    status = Column(String, nullable=False, default="active")
+
+    user = relationship("User", back_populates="study_plans")
+
+    __table_args__ = (
+       Index('uq_study_plans_one_active','user_id', unique=True,postgresql_where=text("status = 'active'"),),
+    )
+
+
+class DictionaryFavorite(Base):
+    __tablename__ = "dictionary_favorites"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    word = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+
+    user = relationship("User", back_populates="dictionary_favorites")
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'word', name='uq_dictionary_favorites_user_word'),
+        Index('idx_dictionary_favorites_user', 'user_id', 'created_at'),
+    )
+
+
+class DictionaryRecent(Base):
+    __tablename__ = "dictionary_recent"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    word = Column(String, nullable=False)
+    searched_at = Column(DateTime(timezone=True), default=func.now())
+
+    user = relationship("User", back_populates="dictionary_recent")
+
+    __table_args__ = (
+        Index('idx_dictionary_recent_user_date', 'user_id', 'searched_at'),
+    )
