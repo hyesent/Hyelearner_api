@@ -1,75 +1,147 @@
-from fastapi import APIRouter, Depends, HTTPException
+# ============================================================
+# HYELEARNER: ROUTES — CAREER
+# Built by Hyesent.dev
+# ============================================================
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional
+from datetime import datetime
 
 from database import get_db
-from models import User
-from dependencies import get_current_user
+from models import User, CareerCheck
+from dependencies import get_current_user, call_ai_with_limit
 from services.ai import ai_service
+from schemas import CareerHistoryItem, CareerHistoryResponse, CareerCheckResponse
 
 router = APIRouter()
 
 
 # ============================================================
-# COURSE FINDER — CHECK ADMISSION ELIGIBILITY
+# CHECK ADMISSION
 # ============================================================
 
 @router.post("/check")
 async def check_admission(
     data: dict,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    COURSE FINDER — Check if user qualifies for a course at ANY university.
-    Uses AI (Gemini/Groq) to determine admission requirements.
-    Returns: qualified/partial/not_qualified + similar courses if not qualified.
-    """
-    university = data.get("university", "").strip()
+    university = (data.get("university") or "").strip()
     country = data.get("country", "")
-    course = data.get("course", "").strip()
+    course = (data.get("course") or "").strip()
     score = data.get("score")
     score_type = data.get("score_type", "percentage")
     subjects = data.get("subjects", [])
-    
-    # Validation
+
     if not university:
-        raise HTTPException(status_code=400, detail="University name required")
+        raise HTTPException(400, "University name required")
     if not course:
-        raise HTTPException(status_code=400, detail="Course name required")
-    if not score:
-        raise HTTPException(status_code=400, detail="Score required")
-    
-    # Auto-detect score type based on country
+        raise HTTPException(400, "Course name required")
+    if score is None:
+        raise HTTPException(400, "Score required")
+
     if not score_type or score_type == "percentage":
         score_type = detect_score_type(country)
-    
-    # Call AI service — Course Finder
-    result = await ai_service.course_finder_check(
+
+    # Call AI under limit
+    result = await call_ai_with_limit(
+        db,
+        current_user.id,
+        ai_service.course_finder_check,
         university=university,
         country=country,
         course=course,
         score=score,
         score_type=score_type,
-        subjects=subjects
+        subjects=subjects,
     )
-    
+
+    # Persist
+    try:
+        db.add(CareerCheck(
+            user_id=current_user.id,
+            university=university,
+            country=country,
+            course=course,
+            score=score,
+            score_type=score_type,
+            subjects=subjects,
+            status=result.get("status"),
+            chance_percentage=(result.get("result") or {}).get("chance_percentage"),
+            result_json=result,
+        ))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"⚠️ Failed to save career check: {e}")
+
     return result
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# HISTORY
+# ============================================================
+
+@router.get("/history", response_model=CareerHistoryResponse)
+def get_history(
+    limit: int = Query(30, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(CareerCheck)
+        .filter_by(user_id=current_user.id)
+        .order_by(CareerCheck.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    items = [
+        CareerHistoryItem(
+            id=r.id,
+            university=r.university,
+            course=r.course,
+            status=r.status,
+            chance_percentage=r.chance_percentage,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+    return {"checks": items}
+
+
+# ============================================================
+# GET SINGLE CHECK
+# ============================================================
+
+@router.get("/check/{check_id}", response_model=CareerCheckResponse)
+def get_check(
+    check_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(CareerCheck)
+        .filter_by(id=check_id, user_id=current_user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(404, "Check not found")
+    return row
+
+
+# ============================================================
+# HELPERS
 # ============================================================
 
 def detect_score_type(country: str) -> str:
-    """Detect score type based on country"""
-    country_lower = country.lower()
-    
-    if any(c in country_lower for c in ["nigeria", "ghana", "kenya"]):
+    c = (country or "").lower()
+    if any(x in c for x in ["nigeria", "ghana", "kenya"]):
         return "jamb"
-    elif country_lower in ["usa", "united states", "canada"]:
+    if c in ["usa", "united states", "canada"]:
         return "sat"
-    elif country_lower in ["uk", "united kingdom"]:
+    if c in ["uk", "united kingdom"]:
         return "a-level"
-    else:
-        return "percentage"
+    return "percentage"
